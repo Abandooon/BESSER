@@ -28,7 +28,7 @@ from besser.BUML.metamodel.structural import (
     Enumeration,
     BinaryAssociation,
 )
-from besser.utilities.requirements_to_buml.schemas import (
+from besser.utilities.requirements_to_buml.m3_schema_projector import (
     NormalizedCandidateModel,
     ReviewSummary,
     ReviewSidecar,

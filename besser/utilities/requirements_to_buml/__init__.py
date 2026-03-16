@@ -22,7 +22,7 @@ from besser.utilities.requirements_to_buml.normalization import normalize_candid
 from besser.utilities.requirements_to_buml.compilation import compile_to_domain_model
 from besser.utilities.requirements_to_buml.review import generate_review
 from besser.utilities.requirements_to_buml.validation import validate_candidate
-from besser.utilities.requirements_to_buml.schemas import (
+from besser.utilities.requirements_to_buml.m3_schema_projector import (
     CandidateModel,
     NormalizedCandidateModel,
     ReviewSummary,

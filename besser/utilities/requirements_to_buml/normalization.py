@@ -19,7 +19,7 @@ import re
 import logging
 from typing import Any
 
-from besser.utilities.requirements_to_buml.schemas import (
+from besser.utilities.requirements_to_buml.m3_schema_projector import (
     CandidateModel,
     CandidateClass,
     CandidateProperty,

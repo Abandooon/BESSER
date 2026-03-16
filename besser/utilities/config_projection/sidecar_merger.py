@@ -14,7 +14,7 @@ import copy
 import logging
 from typing import Any
 
-from besser.utilities.requirements_to_buml.schemas import ReviewSidecar
+from besser.utilities.requirements_to_buml.m3_schema_projector import ReviewSidecar
 
 logger = logging.getLogger(__name__)
 

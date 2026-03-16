@@ -8,9 +8,22 @@ The wrapper schema is the single contract consumed by:
 
 It is an M2 → M1 projection — NOT a new truth source.
 
-Type mapping follows the same primitives as BESSER and the existing
-Pydantic / JSON Schema generators, but outputs *standard* JSON Schema
-(Draft 2020-12 compatible) rather than NGSI-LD.
+Architecture (fixing Deviation B from 04_实施状态与修正方案):
+    Previous version hand-wrote ``_type_to_schema`` / ``_property_schema`` /
+    ``_enum_schema``, duplicating PydanticGenerator's type mapping logic.
+
+    This version delegates base JSON Schema generation to
+    ``generator_bridge.generate_base_json_schema()``, which calls BESSER's
+    ``PydanticGenerator`` → dynamic import → ``.model_json_schema()``.
+    Then it layers DomainModel metadata on top (``x-is-id``, ``readOnly``,
+    ``x-composite``, association annotations, sidecar markers).
+
+Chain::
+
+    DomainModel
+      → generator_bridge.generate_base_json_schema()   (base schema from PydanticGenerator)
+      → _augment_with_metadata()                       (overlay is_id, is_read_only, etc.)
+      → wrapper schema                                  (M2→M1 projection)
 """
 
 from __future__ import annotations
@@ -21,31 +34,15 @@ from typing import Any
 from besser.BUML.metamodel.structural import (
     DomainModel,
     Class,
-    Enumeration,
     Property,
     BinaryAssociation,
-    PrimitiveDataType,
     UNLIMITED_MAX_MULTIPLICITY,
+)
+from besser.utilities.config_projection.generator_bridge import (
+    generate_base_json_schema,
 )
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Primitive type → JSON Schema mapping
-# ---------------------------------------------------------------------------
-
-_PRIMITIVE_SCHEMA: dict[str, dict[str, Any]] = {
-    "str":       {"type": "string"},
-    "int":       {"type": "integer"},
-    "float":     {"type": "number"},
-    "bool":      {"type": "boolean"},
-    "date":      {"type": "string", "format": "date"},
-    "datetime":  {"type": "string", "format": "date-time"},
-    "time":      {"type": "string", "format": "time"},
-    "timedelta": {"type": "string", "description": "ISO-8601 duration"},
-    "any":       {},
-}
 
 
 # ---------------------------------------------------------------------------
@@ -56,9 +53,13 @@ def build_wrapper_schema(
     domain_model: DomainModel,
     *,
     schema_id: str | None = None,
-    include_associations: bool = True,
 ) -> dict[str, Any]:
-    """Build a JSON Schema from *domain_model*.
+    """Build a wrapper JSON Schema from *domain_model*.
+
+    1. Calls ``generator_bridge.generate_base_json_schema()`` to get the
+       base schema (via BESSER's PydanticGenerator).
+    2. Overlays DomainModel metadata: ``x-is-id``, ``readOnly``,
+       ``x-composite``, association descriptions.
 
     Parameters
     ----------
@@ -66,189 +67,87 @@ def build_wrapper_schema(
         The confirmed M2 centre representation.
     schema_id : str | None
         Optional ``$id`` for the root schema.
-    include_associations : bool
-        If *True*, association ends are included as ``$ref`` or array-of-``$ref``
-        properties on owning classes.
 
     Returns
     -------
     dict
         A JSON Schema document with ``$defs`` for every class and enum.
     """
-    defs: dict[str, Any] = {}
+    # --- Step 1: base schema from PydanticGenerator ---
+    schema = generate_base_json_schema(domain_model)
 
-    # ---- Enumerations ------------------------------------------------
-    for enum in domain_model.get_enumerations():
-        defs[enum.name] = _enum_schema(enum)
-
-    # ---- Classes -----------------------------------------------------
-    class_list = list(domain_model.get_classes())
-    for cls in class_list:
-        defs[cls.name] = _class_schema(cls, domain_model, include_associations)
-
-    # ---- Root schema -------------------------------------------------
-    root: dict[str, Any] = {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "title": domain_model.name,
-        "description": f"Wrapper schema for domain '{domain_model.name}'",
-        "type": "object",
-        "$defs": defs,
-    }
     if schema_id:
-        root["$id"] = schema_id
+        schema["$id"] = schema_id
 
-    # Root properties: one key per domain class, each an array of instances
-    root["properties"] = {}
-    for cls in class_list:
-        root["properties"][cls.name] = {
-            "type": "array",
-            "items": {"$ref": f"#/$defs/{cls.name}"},
-            "description": f"Instances of {cls.name}",
-        }
+    schema["description"] = f"Wrapper schema for domain '{domain_model.name}'"
+
+    # --- Step 2: augment with DomainModel metadata ---
+    defs = schema.get("$defs", {})
+    _augment_with_metadata(defs, domain_model)
 
     logger.info(
-        "Wrapper schema built: %d class defs, %d enum defs",
-        len(class_list),
-        len(list(domain_model.get_enumerations())),
+        "Wrapper schema built: %d defs, %d top-level properties",
+        len(defs),
+        len(schema.get("properties", {})),
     )
-    return root
+    return schema
 
 
 # ---------------------------------------------------------------------------
-# Internal builders
+# Metadata overlay — enrich base schema with M2 semantics
 # ---------------------------------------------------------------------------
 
-def _enum_schema(enum: Enumeration) -> dict[str, Any]:
-    """Build a JSON Schema fragment for an enumeration."""
-    literals = sorted(lit.name for lit in enum.literals)
-    return {
-        "type": "string",
-        "enum": literals,
-        "description": (
-            getattr(enum.metadata, "description", "") if enum.metadata else ""
-        ),
-    }
-
-
-def _class_schema(
-    cls: Class,
+def _augment_with_metadata(
+    defs: dict[str, Any],
     domain_model: DomainModel,
-    include_associations: bool,
-) -> dict[str, Any]:
-    """Build a JSON Schema fragment for a class."""
-    properties: dict[str, Any] = {}
-    required: list[str] = []
+) -> None:
+    """Mutate *defs* in place, adding metadata from DomainModel.
 
-    # ---- Attributes --------------------------------------------------
-    for attr in sorted(cls.attributes, key=lambda a: a.name):
-        prop_schema = _property_schema(attr)
-        properties[attr.name] = prop_schema
-        if not attr.is_optional and attr.default_value is None:
-            required.append(attr.name)
+    The base schema from PydanticGenerator already has correct types,
+    optionality, and enum references.  This function adds:
+    - ``x-is-id`` on id properties
+    - ``readOnly`` on read-only properties
+    - ``x-abstract`` on abstract classes
+    - ``x-composite`` on composite association ends
+    - ``description`` from Metadata
+    - association-end annotations
+    """
+    for cls in domain_model.get_classes():
+        class_def = defs.get(cls.name)
+        if class_def is None:
+            continue
 
-    # ---- Association ends (as reference properties) ------------------
-    if include_associations:
+        props = class_def.get("properties", {})
+
+        # --- Attribute metadata ---
+        for attr in cls.attributes:
+            prop_schema = props.get(attr.name)
+            if prop_schema is None:
+                continue
+
+            if attr.is_id:
+                prop_schema["x-is-id"] = True
+            if attr.is_read_only:
+                prop_schema["readOnly"] = True
+            if attr.metadata and attr.metadata.description:
+                prop_schema["description"] = attr.metadata.description
+
+        # --- Class metadata ---
+        if cls.is_abstract:
+            class_def["x-abstract"] = True
+        if cls.metadata and cls.metadata.description:
+            class_def["description"] = cls.metadata.description
+
+        # --- Association end metadata ---
         for assoc in cls.associations:
             if not isinstance(assoc, BinaryAssociation):
                 continue
-            ends = list(assoc.ends)
-            for end in ends:
-                # Skip the end that points TO this class — we want the
-                # "outgoing" end (the one whose type != cls).
+            for end in assoc.ends:
                 if end.type == cls:
+                    continue  # skip self-referencing end
+                end_schema = props.get(end.name)
+                if end_schema is None:
                     continue
-                prop_schema = _association_end_schema(end)
-                properties[end.name] = prop_schema
-                # Required if min multiplicity > 0
-                if end.multiplicity.min > 0:
-                    required.append(end.name)
-
-    schema: dict[str, Any] = {
-        "type": "object",
-        "properties": properties,
-        "additionalProperties": False,
-        "description": (
-            getattr(cls.metadata, "description", "") if cls.metadata else ""
-        ),
-    }
-    if required:
-        schema["required"] = sorted(set(required))
-    if cls.is_abstract:
-        schema["x-abstract"] = True
-
-    return schema
-
-
-def _property_schema(prop: Property) -> dict[str, Any]:
-    """Map a B-UML Property to a JSON Schema property."""
-    base = _type_to_schema(prop.type)
-
-    # Multi-valued → array
-    if prop.multiplicity.max > 1 or prop.multiplicity.max == UNLIMITED_MAX_MULTIPLICITY:
-        schema: dict[str, Any] = {
-            "type": "array",
-            "items": base,
-        }
-        if prop.multiplicity.min > 0:
-            schema["minItems"] = prop.multiplicity.min
-        if prop.multiplicity.max != UNLIMITED_MAX_MULTIPLICITY:
-            schema["maxItems"] = prop.multiplicity.max
-    else:
-        schema = dict(base)
-
-    # Optional → nullable
-    if prop.is_optional:
-        if "type" in schema:
-            schema["type"] = [schema["type"], "null"]
-        else:
-            schema["oneOf"] = [base, {"type": "null"}]
-
-    # Default value
-    if prop.default_value is not None:
-        schema["default"] = prop.default_value
-
-    # Metadata
-    if prop.is_id:
-        schema["x-is-id"] = True
-    if prop.is_read_only:
-        schema["readOnly"] = True
-    if prop.metadata and prop.metadata.description:
-        schema["description"] = prop.metadata.description
-
-    return schema
-
-
-def _association_end_schema(end: Property) -> dict[str, Any]:
-    """Map an association end to a JSON Schema reference property."""
-    ref = {"$ref": f"#/$defs/{end.type.name}"}
-
-    if end.multiplicity.max > 1 or end.multiplicity.max == UNLIMITED_MAX_MULTIPLICITY:
-        schema: dict[str, Any] = {
-            "type": "array",
-            "items": ref,
-            "description": f"Association to {end.type.name}",
-        }
-        if end.multiplicity.min > 0:
-            schema["minItems"] = end.multiplicity.min
-        if end.multiplicity.max != UNLIMITED_MAX_MULTIPLICITY:
-            schema["maxItems"] = end.multiplicity.max
-    else:
-        schema = dict(ref)
-        schema["description"] = f"Association to {end.type.name}"
-
-    if end.is_composite:
-        schema["x-composite"] = True
-
-    return schema
-
-
-def _type_to_schema(type_obj: Any) -> dict[str, Any]:
-    """Convert a B-UML type to a JSON Schema type fragment."""
-    if isinstance(type_obj, PrimitiveDataType):
-        return dict(_PRIMITIVE_SCHEMA.get(type_obj.name, {"type": "string"}))
-    if isinstance(type_obj, Enumeration):
-        return {"$ref": f"#/$defs/{type_obj.name}"}
-    if isinstance(type_obj, Class):
-        return {"$ref": f"#/$defs/{type_obj.name}"}
-    # Fallback
-    return {"type": "string"}
+                if end.is_composite:
+                    end_schema["x-composite"] = True
+                end_schema["x-association"] = assoc.name

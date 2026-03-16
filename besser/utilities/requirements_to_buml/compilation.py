@@ -38,7 +38,7 @@ from besser.BUML.metamodel.structural import (
     TimeDeltaType,
     AnyType,
 )
-from besser.utilities.requirements_to_buml.schemas import (
+from besser.utilities.requirements_to_buml.m3_schema_projector import (
     NormalizedCandidateModel,
     NormalizedClass,
     NormalizedProperty,

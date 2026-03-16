@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 
 # Stage 1 — requirements → candidate → DomainModel
 from besser.utilities.requirements_to_buml import requirements_to_buml
-from besser.utilities.requirements_to_buml.schemas import (
+from besser.utilities.requirements_to_buml.m3_schema_projector import (
     CandidateModel,
     NormalizedCandidateModel,
     ReviewSummary,
@@ -99,6 +99,7 @@ class PatchPreviewRequest(BaseModel):
     wrapper_schema: dict[str, Any]
     current_config: dict[str, Any]
     change_request: str
+    patch: Optional[dict[str, Any]] = None
     context: Optional[dict[str, Any]] = None
 
 
@@ -262,41 +263,144 @@ async def generate_config_schema_from_model(input_data: dict[str, Any]):
 
 
 # ===================================================================
-# 3. Patch endpoints (Stage 3 stubs)
+# 3. Patch endpoints (Stage 3)
 # ===================================================================
 
 @router.post("/config/patch/preview")
 async def patch_preview(req: PatchPreviewRequest):
-    """Preview a structured patch from a natural-language change request.
+    """Preview a structured patch: validate operations against the
+    wrapper schema and return affected fields + warnings."""
+    from besser.utilities.config_projection.patch_engine import (
+        parse_patch, validate_patch,
+    )
+    operations = parse_patch(req.patch if isinstance(req.patch, dict) else {"operations": []})
 
-    Stage 3 stub — returns a placeholder structure.
-    Full implementation requires LLM integration constrained by
-    the wrapper schema.
-    """
+    # If change_request is a natural-language string and no operations
+    # are provided, return a hint that LLM integration is pending.
+    if not operations and req.change_request:
+        return {
+            "patch": {"operations": [], "metadata": {"source": "chat", "schemaVersion": "v1"}},
+            "affected_fields": [],
+            "warnings": [
+                "Natural-language patch generation requires LLM integration "
+                "(not yet wired). Please provide structured operations."
+            ],
+            "validation_summary": {"is_valid": True, "errors": [], "warnings": []},
+        }
+
+    validation = validate_patch(operations, req.wrapper_schema, req.current_config)
     return {
-        "patch": {
-            "operations": [],
-            "metadata": {"source": "chat", "schemaVersion": "v1"},
+        "patch": req.patch if isinstance(req.patch, dict) else {"operations": []},
+        "affected_fields": validation["affected_fields"],
+        "warnings": validation["warnings"],
+        "validation_summary": {
+            "is_valid": validation["is_valid"],
+            "errors": validation["errors"],
+            "warnings": validation["warnings"],
         },
-        "affected_fields": [],
-        "warnings": ["Patch preview is a Stage 3 stub — LLM integration pending."],
-        "validation_summary": {"is_valid": True, "issues": []},
     }
 
 
 @router.post("/config/patch/apply")
 async def patch_apply(req: PatchApplyRequest):
-    """Apply a structured patch to a configuration instance.
+    """Apply a structured patch to a configuration instance."""
+    from besser.utilities.config_projection.patch_engine import (
+        parse_patch, validate_patch, apply_patch,
+    )
+    operations = parse_patch(req.patch)
+    validation = validate_patch(operations, req.wrapper_schema, req.current_config)
 
-    Stage 3 stub — returns the config unchanged.
-    """
+    if not validation["is_valid"]:
+        return {
+            "updated_config": req.current_config,
+            "diff": [],
+            "conflicts": [],
+            "validation_errors": validation["errors"],
+        }
+
+    updated, diff = apply_patch(req.current_config, operations)
     return {
-        "updated_config": req.current_config,
-        "diff": [],
+        "updated_config": updated,
+        "diff": diff,
         "conflicts": [],
         "validation_errors": [],
-        "message": "Patch apply is a Stage 3 stub.",
     }
+
+
+# ===================================================================
+# 4. Simulation endpoint (Stage 3)
+# ===================================================================
+
+class SimulateRequest(BaseModel):
+    sample_event: dict[str, Any]
+    config: dict[str, Any]
+    wrapper_schema: Optional[dict[str, Any]] = None
+
+
+@router.post("/bots/simulate")
+async def simulate_bot(req: SimulateRequest):
+    """Simulate a sample event against a bot configuration."""
+    from besser.utilities.config_projection.simulate import simulate_event
+    return simulate_event(req.sample_event, req.config, req.wrapper_schema)
+
+
+@router.post("/events/preview-match")
+async def preview_event_match(req: SimulateRequest):
+    """Preview which triggers and rules a sample event would match."""
+    from besser.utilities.config_projection.simulate import simulate_event
+    return simulate_event(req.sample_event, req.config, req.wrapper_schema)
+
+
+# ===================================================================
+# 5. Export / Import endpoints (Stage 4)
+# ===================================================================
+
+class ExportRequest(BaseModel):
+    config: dict[str, Any]
+    project_name: str = ""
+    model_version: str = "1.0.0"
+    sidecar: Optional[dict[str, Any]] = None
+    wrapper_schema: Optional[dict[str, Any]] = None
+
+
+class ImportValidateRequest(BaseModel):
+    bundle: dict[str, Any]
+    target_config: Optional[dict[str, Any]] = None
+    target_schema: Optional[dict[str, Any]] = None
+
+
+@router.post("/projects/export-config")
+async def export_config(req: ExportRequest):
+    """Export an M1 project configuration as a portable bundle."""
+    from besser.utilities.bot_project_export import export_project
+    try:
+        bundle = export_project(
+            config=req.config,
+            project_name=req.project_name,
+            model_version=req.model_version,
+            sidecar=req.sidecar,
+            wrapper_schema=req.wrapper_schema,
+        )
+        return bundle
+    except Exception as e:
+        logger.error("Export failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"Export failed: {e}")
+
+
+@router.post("/projects/import-config/validate")
+async def validate_import_config(req: ImportValidateRequest):
+    """Validate an export bundle before importing."""
+    from besser.utilities.bot_project_export import validate_import
+    try:
+        report = validate_import(
+            bundle=req.bundle,
+            target_config=req.target_config,
+            target_schema=req.target_schema,
+        )
+        return report
+    except Exception as e:
+        logger.error("Import validation failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"Validation failed: {e}")
 
 
 # ===================================================================
