@@ -112,6 +112,9 @@ from besser.utilities.web_modeling_editor.backend.config import (
     is_generator_supported,
 )
 
+from besser.utilities.web_modeling_editor.backend.api import editor_workflow_router
+
+
 logger = logging.getLogger(__name__)
 
 # Initialize FastAPI application
@@ -134,6 +137,8 @@ app.add_middleware(
 # Include GitHub OAuth and deployment routers
 app.include_router(github_oauth_router, prefix="/besser_api")
 app.include_router(github_deploy_router, prefix="/besser_api")
+
+app.include_router(editor_workflow_router)
 
 # Constants
 API_VERSION = "1.0.0"
