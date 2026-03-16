@@ -166,6 +166,13 @@ def class_buml_to_json(domain_model):
                         "attributeType": attr_type,
                         "isOptional": attr.is_optional,
                     }
+                    if attr.is_id:
+                        attr_element["isId"] = True
+                    if attr.is_read_only:
+                        attr_element["isReadOnly"] = True
+                    if attr.multiplicity and not (attr.multiplicity.min == 1 and attr.multiplicity.max == 1):
+                        attr_element[
+                            "multiplicity"] = f"{attr.multiplicity.min}..{'*' if attr.multiplicity.max == UNLIMITED_MAX_MULTIPLICITY else attr.multiplicity.max}"
                     if attr.default_value is not None:
                         attr_element["defaultValue"] = attr.default_value
                     elements[attr_id] = attr_element

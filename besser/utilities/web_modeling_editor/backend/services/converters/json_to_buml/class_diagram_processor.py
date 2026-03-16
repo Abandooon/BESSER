@@ -139,17 +139,24 @@ def process_class_diagram(json_data):
                         name = attr.get("name", "").strip()
                         attr_type = attr.get("attributeType", "str")
                         is_optional = attr.get("isOptional", False)
+                        is_id = attr.get("isId", False)
+                        is_read_only = attr.get("isReadOnly", False)
                         default_value = attr.get("defaultValue", None)
+                        attr_multiplicity = parse_multiplicity(attr.get("multiplicity", "1..1"))
                     else:
                         # Legacy format - parse from name string
                         visibility, name, attr_type = parse_attribute(attr.get("name", ""), domain_model)
                         is_optional = False
+                        is_id = False
+                        is_read_only = False
                         default_value = None
+                        attr_multiplicity = None
 
                     if not name:  # Skip if no name was returned
                         continue
                     if name in attribute_names:
-                        raise HTTPException(status_code=400, detail=f"Duplicate attribute name '{name}' found in class '{class_name}'")
+                        raise HTTPException(status_code=400,
+                                            detail=f"Duplicate attribute name '{name}' found in class '{class_name}'")
                     attribute_names.add(name)
 
                     # Find the type in the domain model
@@ -159,10 +166,20 @@ def process_class_diagram(json_data):
                             type_obj = t
                             break
 
-                    if type_obj:
-                        property_ = Property(name=name, type=type_obj, visibility=visibility, is_optional=is_optional, default_value=default_value)
-                    else:
-                        property_ = Property(name=name, type=PrimitiveDataType(attr_type), visibility=visibility, is_optional=is_optional, default_value=default_value)
+                    # Build common keyword arguments
+                    prop_kwargs = dict(
+                        name=name,
+                        type=type_obj if type_obj else PrimitiveDataType(attr_type),
+                        visibility=visibility,
+                        is_optional=is_optional,
+                        is_id=is_id,
+                        is_read_only=is_read_only,
+                        default_value=default_value,
+                    )
+                    if attr_multiplicity is not None:
+                        prop_kwargs["multiplicity"] = attr_multiplicity
+
+                    property_ = Property(**prop_kwargs)
                     cls.add_attribute(property_)
 
             # Add methods
