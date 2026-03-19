@@ -1,0 +1,65 @@
+agent:
+  check_transitions_delay: 2
+
+platforms:
+  websocket:
+    host: 127.0.0.1
+    port: 9876
+    streamlit:
+      host: 127.0.0.1
+      port: 5001
+      chat:
+        size: 16
+        font: sans
+        line_spacing: 1.5
+        alignment: left
+        color: inherit
+        contrast: medium
+
+  telegram:
+    token: YOUR-BOT-TOKEN
+
+  github:
+    personal_token: GITHUB-PERSONAL-TOKEN
+    webhook_token: WEBHOOK-TOKEN
+    webhook_port: 8901
+
+  gitlab:
+    personal_token: GITLAB-PERSONAL-TOKEN
+    webhook_token: WEBHOOK-TOKEN
+    webhook_port: 8901
+
+  a2a:
+    port: 8000
+
+nlp:
+  language: en
+  region: US
+  timezone: Europe/Madrid
+  pre_processing: true
+  intent_threshold: 0.4
+  openai:
+    api_key: sk-GOya4Nozmk69iE3DRcI5doKnzP2xq3JCJDxOxJmZ567UBmfb
+  huggingface:
+    token: YOUR-API-KEY
+  replicate:
+    api_key: YOUR-API-KEY
+
+db:
+  monitoring:
+    enabled: false
+    dialect: postgresql
+    host: localhost
+    port: 5432
+    database: mydatabase
+    username: myuser
+    password: mypassword
+
+  streamlit:
+    enabled: false
+    dialect: postgresql
+    host: localhost
+    port: 5432
+    database: mydatabase
+    username: myuser
+    password: mypassword

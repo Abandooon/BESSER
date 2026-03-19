@@ -1,0 +1,829 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Config Workbench</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-zinc-950">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useRef, useEffect } = React;
+
+    // 优先从后端加载；失败时回退到内置常量
+    async function fetchJsonOrFallback(url, fallback) {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return await res.json();
+      } catch (e) {
+        console.warn(`Failed to load ${url}, using fallback.`, e);
+        return fallback;
+      }
+    }
+
+    const ENUMS = {"ActionType":["CALL_WEBHOOK","REMOVE_LABEL","CREATE_EXTERNAL_TASK","POST_COMMENT","CLOSE_ISSUE_OR_PR","ASSIGN_MAINTAINER","MARK_FOR_MANUAL_HANDLING","REQUEST_REVIEW","ADD_LABEL","SEND_NOTIFICATION"],"AuthenticationMethod":["SECRET","TOKEN","APP_AUTH","NONE"],"BotScope":["REPOSITORY_SET","ORGANIZATION","PROJECT"],"BotTemplateCategory":["CUSTOM","STALE_ISSUE_REMINDER","ISSUE_AUTO_TRIAGE","RELEASE_NOTE_COLLECTION","CODE_OF_CONDUCT_REMINDER","NEW_CONTRIBUTOR_WELCOME"],"CompatibilityStatus":["INCOMPATIBLE","PARTIALLY_COMPATIBLE","COMPATIBLE"],"ConflictResolutionStrategy":["FIRST_MATCH_WINS","HIGHEST_PRIORITY_WINS","MANUAL_REVIEW_REQUIRED","MERGE_ACTIONS"],"ConnectorType":["WEBHOOK_INPUT","WEBHOOK_OUTPUT","GITHUB_APP","ENTERPRISE_MESSAGE_NOTIFICATION","GITHUB_TOKEN","GITLAB_TOKEN"],"EnvironmentType":["DESIGN","PRODUCTION","TEST"],"EventType":["REVIEW_SUBMITTED","ISSUE_CLOSED","RELEASE_CREATED","PULL_REQUEST_CREATED","SCHEDULE_TRIGGERED","PULL_REQUEST_UPDATED","EXTERNAL_WEBHOOK_TRIGGERED","MERGE_REQUEST_CREATED","ISSUE_CREATED","COMMENT_CREATED"],"MessageTemplateType":["REMINDER","NOTIFICATION_BODY","COMMENT","NOTIFICATION_TITLE"],"NotificationLevel":["APPROVAL","INFO","CRITICAL","WARNING"],"NotificationTargetType":["PLATFORM_MENTION_LIST","SLACK_CHANNEL","MATTERMOST_CHANNEL","TEAMS_CHANNEL","ENTERPRISE_IM_GROUP","EMAIL","WEBHOOK"],"PlatformType":["GITEA","GITHUB","FORGEJO","GITLAB","WEBHOOK_GATEWAY","ENTERPRISE_MESSAGING"],"ProjectStatus":["INACTIVE","ACTIVE","DRAFT","ARCHIVED"],"RepositoryStatus":["ARCHIVED","ACTIVE","DISABLED"],"RepositoryType":["DOCUMENTATION","CODE","GOVERNANCE"],"RepositoryVisibility":["PRIVATE","PUBLIC","INTERNAL"],"RiskLevel":["HIGH","MEDIUM","LOW"],"SimulationResultStatus":["FAILED","WARNING","SUCCESS"],"TimeoutHandling":["REJECT","MARK_PENDING","AUTO_DOWNGRADE","ESCALATE"]};
+
+    const FIELD_GROUPS_FALLBACK = {"Action":[{"group":"Identity","fields":["action_id"],"collapsed":false},{"group":"Core","fields":["action_type","execution_order","name","requires_approval"],"collapsed":false},{"group":"Optional","fields":["description"],"collapsed":true},{"group":"Associations","fields":["approval_policy","message_template","notification_target","rule"],"collapsed":true}],"ApprovalPolicy":[{"group":"Identity","fields":["approval_policy_id"],"collapsed":false},{"group":"Core","fields":["allow_auto_downgrade_to_low_risk_alternative","applicable_action_type","approval_timeout_seconds","name","risk_level","timeout_handling"],"collapsed":false},{"group":"Optional","fields":["description"],"collapsed":true},{"group":"Associations","fields":["actions","automation_project"],"collapsed":true}],"AutomationProject":[{"group":"Identity","fields":["project_id"],"collapsed":false},{"group":"Core","fields":["created_at","name","status","updated_at","version"],"collapsed":false},{"group":"Optional","fields":["description"],"collapsed":true},{"group":"Associations","fields":["approval_policies","bot_instances","bot_templates","community_organizations","configuration_packages","environments","message_templates","notification_targets","platform_connectors","schedule_tasks","simulation_runs"],"collapsed":true}],"BotInstance":[{"group":"Identity","fields":["instance_id"],"collapsed":false},{"group":"Core","fields":["is_enabled","name","priority","risk_approval_required","scope"],"collapsed":false},{"group":"Optional","fields":["remark"],"collapsed":true},{"group":"Associations","fields":["automation_project","bot_template","repositories","rules","schedule_tasks","simulation_runs"],"collapsed":true}],"BotTemplate":[{"group":"Identity","fields":["template_id"],"collapsed":false},{"group":"Core","fields":["name","risk_level","template_category"],"collapsed":false},{"group":"Optional","fields":["description"],"collapsed":true},{"group":"Associations","fields":["automation_project","bot_instances","default_message_template"],"collapsed":true}],"CommunityOrganization":[{"group":"Identity","fields":["organization_id"],"collapsed":false},{"group":"Core","fields":["name","platform_type","platform_unique_id"],"collapsed":false},{"group":"Optional","fields":["description"],"collapsed":true},{"group":"Associations","fields":["automation_project","platform_connector","repositories"],"collapsed":true}],"CompatibilityReport":[{"group":"Identity","fields":["compatibility_report_id"],"collapsed":false},{"group":"Core","fields":["generated_at","overall_status"],"collapsed":false},{"group":"Optional","fields":["summary"],"collapsed":true},{"group":"Associations","fields":["configuration_package"],"collapsed":true}],"ConfigurationPackage":[{"group":"Identity","fields":["configuration_package_id"],"collapsed":false},{"group":"Core","fields":["contains_plaintext_secrets","exported_at","package_name","package_version"],"collapsed":false},{"group":"Associations","fields":["automation_project","compatibility_reports"],"collapsed":true}],"Environment":[{"group":"Identity","fields":["environment_id"],"collapsed":false},{"group":"Core","fields":["api_base_url","credential_ref","environment_type","identifier","is_enabled","name"],"collapsed":false},{"group":"Associations","fields":["automation_project","platform_connectors"],"collapsed":true}],"EventTrigger":[{"group":"Identity","fields":["trigger_id"],"collapsed":false},{"group":"Core","fields":["event_type","is_enabled","name","source_platform"],"collapsed":false},{"group":"Optional","fields":["deduplication_window_seconds","description"],"collapsed":true},{"group":"Associations","fields":["rules"],"collapsed":true}],"MessageTemplate":[{"group":"Identity","fields":["message_template_id"],"collapsed":false},{"group":"Core","fields":["body_template","language","name","supports_conditional_fragments","template_type"],"collapsed":false},{"group":"Optional","fields":["description","title_template"],"collapsed":true},{"group":"Associations","fields":["actions","automation_project","bot_templates"],"collapsed":true}],"NotificationTarget":[{"group":"Identity","fields":["notification_target_id"],"collapsed":false},{"group":"Core","fields":["address_or_channel","is_enabled","name","receiving_level","target_type"],"collapsed":false},{"group":"Optional","fields":["description"],"collapsed":true},{"group":"Associations","fields":["actions","automation_project"],"collapsed":true}],"PlatformConnector":[{"group":"Identity","fields":["connector_id"],"collapsed":false},{"group":"Core","fields":["authentication_method","connector_type","is_enabled","name","retry_count","retry_interval_seconds","signature_validation_enabled","timeout_seconds"],"collapsed":false},{"group":"Optional","fields":["api_base_url","remark","secret_ref"],"collapsed":true},{"group":"Associations","fields":["automation_project","community_organizations","environment"],"collapsed":true}],"Repository":[{"group":"Identity","fields":["repository_id"],"collapsed":false},{"group":"Core","fields":["default_branch","full_name","name","platform_repository_id","repository_type","status","visibility"],"collapsed":false},{"group":"Optional","fields":["description","primary_language"],"collapsed":true},{"group":"Associations","fields":["bot_instances","community_organization"],"collapsed":true}],"Rule":[{"group":"Identity","fields":["rule_id"],"collapsed":false},{"group":"Core","fields":["condition_expression","conflict_resolution_strategy","is_enabled","name","priority"],"collapsed":false},{"group":"Optional","fields":["description"],"collapsed":true},{"group":"Associations","fields":["actions","bot_instance","event_trigger"],"collapsed":true}],"ScheduleTask":[{"group":"Identity","fields":["schedule_task_id"],"collapsed":false},{"group":"Core","fields":["is_enabled","name","time_zone"],"collapsed":false},{"group":"Optional","fields":["cron_expression","description","period_definition"],"collapsed":true},{"group":"Associations","fields":["automation_project","bot_instance"],"collapsed":true}],"SimulationRun":[{"group":"Identity","fields":["simulation_run_id"],"collapsed":false},{"group":"Core","fields":["executed_at","name","result_status","review_record_retained"],"collapsed":false},{"group":"Optional","fields":["sample_event_payload_ref","summary"],"collapsed":true},{"group":"Associations","fields":["automation_project","bot_instance"],"collapsed":true}]};
+
+    const EDITOR_HINTS_FALLBACK = {"Action":{"action_id":{"widget":"text","isPrimaryKey":true},"action_type":{"widget":"select","options":["ADD_LABEL","ASSIGN_MAINTAINER","CALL_WEBHOOK","CLOSE_ISSUE_OR_PR","CREATE_EXTERNAL_TASK","MARK_FOR_MANUAL_HANDLING","POST_COMMENT","REMOVE_LABEL","REQUEST_REVIEW","SEND_NOTIFICATION"]},"description":{"widget":"text","optional":true},"execution_order":{"widget":"number"},"name":{"widget":"text"},"requires_approval":{"widget":"toggle"},"approval_policy":{"widget":"ref-picker","referenceTo":"ApprovalPolicy"},"message_template":{"widget":"ref-picker","referenceTo":"MessageTemplate"},"notification_target":{"widget":"ref-picker","referenceTo":"NotificationTarget"},"rule":{"widget":"ref-picker","referenceTo":"Rule"}},"ApprovalPolicy":{"approval_policy_id":{"widget":"text","isPrimaryKey":true},"allow_auto_downgrade_to_low_risk_alternative":{"widget":"toggle"},"applicable_action_type":{"widget":"select","options":["ADD_LABEL","ASSIGN_MAINTAINER","CALL_WEBHOOK","CLOSE_ISSUE_OR_PR","CREATE_EXTERNAL_TASK","MARK_FOR_MANUAL_HANDLING","POST_COMMENT","REMOVE_LABEL","REQUEST_REVIEW","SEND_NOTIFICATION"]},"approval_timeout_seconds":{"widget":"number"},"description":{"widget":"text","optional":true},"name":{"widget":"text"},"risk_level":{"widget":"select","options":["HIGH","LOW","MEDIUM"]},"timeout_handling":{"widget":"select","options":["AUTO_DOWNGRADE","ESCALATE","MARK_PENDING","REJECT"]},"actions":{"widget":"multi-ref-picker","referenceTo":"Action","multi":true},"automation_project":{"widget":"ref-picker","referenceTo":"AutomationProject"}},"AutomationProject":{"project_id":{"widget":"text","isPrimaryKey":true},"created_at":{"widget":"datetime-picker"},"description":{"widget":"text","optional":true},"name":{"widget":"text"},"status":{"widget":"select","options":["ACTIVE","ARCHIVED","DRAFT","INACTIVE"]},"updated_at":{"widget":"datetime-picker"},"version":{"widget":"text"}},"BotInstance":{"instance_id":{"widget":"text","isPrimaryKey":true},"is_enabled":{"widget":"toggle"},"name":{"widget":"text"},"priority":{"widget":"number","placeholder":"10"},"remark":{"widget":"text","optional":true},"risk_approval_required":{"widget":"toggle"},"scope":{"widget":"select","options":["ORGANIZATION","PROJECT","REPOSITORY_SET"]},"bot_template":{"widget":"ref-picker","referenceTo":"BotTemplate"},"repositories":{"widget":"multi-ref-picker","referenceTo":"Repository","multi":true},"rules":{"widget":"multi-ref-picker","referenceTo":"Rule","multi":true}},"BotTemplate":{"template_id":{"widget":"text","isPrimaryKey":true},"description":{"widget":"text","optional":true},"name":{"widget":"text"},"risk_level":{"widget":"select","options":["HIGH","LOW","MEDIUM"]},"template_category":{"widget":"select","options":["CODE_OF_CONDUCT_REMINDER","CUSTOM","ISSUE_AUTO_TRIAGE","NEW_CONTRIBUTOR_WELCOME","RELEASE_NOTE_COLLECTION","STALE_ISSUE_REMINDER"]},"default_message_template":{"widget":"ref-picker","referenceTo":"MessageTemplate"},"bot_instances":{"widget":"multi-ref-picker","referenceTo":"BotInstance","multi":true}},"CommunityOrganization":{"organization_id":{"widget":"text","isPrimaryKey":true},"description":{"widget":"text","optional":true},"name":{"widget":"text"},"platform_type":{"widget":"select","options":["ENTERPRISE_MESSAGING","FORGEJO","GITEA","GITHUB","GITLAB","WEBHOOK_GATEWAY"]},"platform_unique_id":{"widget":"text"},"platform_connector":{"widget":"ref-picker","referenceTo":"PlatformConnector"},"repositories":{"widget":"multi-ref-picker","referenceTo":"Repository","multi":true}},"Environment":{"environment_id":{"widget":"text","isPrimaryKey":true},"api_base_url":{"widget":"text"},"credential_ref":{"widget":"secret","sensitive":true},"environment_type":{"widget":"select","options":["DESIGN","PRODUCTION","TEST"]},"identifier":{"widget":"text"},"is_enabled":{"widget":"toggle"},"name":{"widget":"text"},"platform_connectors":{"widget":"multi-ref-picker","referenceTo":"PlatformConnector","multi":true}},"EventTrigger":{"trigger_id":{"widget":"text","isPrimaryKey":true},"deduplication_window_seconds":{"widget":"number","optional":true},"description":{"widget":"text","optional":true},"event_type":{"widget":"select","options":["COMMENT_CREATED","EXTERNAL_WEBHOOK_TRIGGERED","ISSUE_CLOSED","ISSUE_CREATED","MERGE_REQUEST_CREATED","PULL_REQUEST_CREATED","PULL_REQUEST_UPDATED","RELEASE_CREATED","REVIEW_SUBMITTED","SCHEDULE_TRIGGERED"]},"is_enabled":{"widget":"toggle"},"name":{"widget":"text"},"source_platform":{"widget":"select","options":["ENTERPRISE_MESSAGING","FORGEJO","GITEA","GITHUB","GITLAB","WEBHOOK_GATEWAY"]},"rules":{"widget":"multi-ref-picker","referenceTo":"Rule","multi":true}},"Rule":{"rule_id":{"widget":"text","isPrimaryKey":true},"condition_expression":{"widget":"text"},"conflict_resolution_strategy":{"widget":"select","options":["FIRST_MATCH_WINS","HIGHEST_PRIORITY_WINS","MANUAL_REVIEW_REQUIRED","MERGE_ACTIONS"]},"description":{"widget":"text","optional":true},"is_enabled":{"widget":"toggle"},"name":{"widget":"text"},"priority":{"widget":"number"},"actions":{"widget":"multi-ref-picker","referenceTo":"Action","multi":true},"bot_instance":{"widget":"ref-picker","referenceTo":"BotInstance"},"event_trigger":{"widget":"ref-picker","referenceTo":"EventTrigger"}},"Repository":{"repository_id":{"widget":"text","isPrimaryKey":true},"default_branch":{"widget":"text"},"description":{"widget":"text","optional":true},"full_name":{"widget":"text"},"name":{"widget":"text"},"platform_repository_id":{"widget":"text"},"primary_language":{"widget":"text","optional":true},"repository_type":{"widget":"select","options":["CODE","DOCUMENTATION","GOVERNANCE"]},"status":{"widget":"select","options":["ACTIVE","ARCHIVED","DISABLED"]},"visibility":{"widget":"select","options":["INTERNAL","PRIVATE","PUBLIC"]},"bot_instances":{"widget":"multi-ref-picker","referenceTo":"BotInstance","multi":true},"community_organization":{"widget":"ref-picker","referenceTo":"CommunityOrganization"}},"NotificationTarget":{"notification_target_id":{"widget":"text","isPrimaryKey":true},"address_or_channel":{"widget":"text"},"description":{"widget":"text","optional":true},"is_enabled":{"widget":"toggle"},"name":{"widget":"text"},"receiving_level":{"widget":"select","options":["APPROVAL","CRITICAL","INFO","WARNING"]},"target_type":{"widget":"select","options":["EMAIL","ENTERPRISE_IM_GROUP","MATTERMOST_CHANNEL","PLATFORM_MENTION_LIST","SLACK_CHANNEL","TEAMS_CHANNEL","WEBHOOK"]},"actions":{"widget":"multi-ref-picker","referenceTo":"Action","multi":true}},"ScheduleTask":{"schedule_task_id":{"widget":"text","isPrimaryKey":true},"cron_expression":{"widget":"text","optional":true},"description":{"widget":"text","optional":true},"is_enabled":{"widget":"toggle"},"name":{"widget":"text"},"period_definition":{"widget":"text","optional":true},"time_zone":{"widget":"text"},"bot_instance":{"widget":"ref-picker","referenceTo":"BotInstance"}},"MessageTemplate":{"message_template_id":{"widget":"text","isPrimaryKey":true},"body_template":{"widget":"text"},"description":{"widget":"text","optional":true},"language":{"widget":"text"},"name":{"widget":"text"},"supports_conditional_fragments":{"widget":"toggle"},"template_type":{"widget":"select","options":["COMMENT","NOTIFICATION_BODY","NOTIFICATION_TITLE","REMINDER"]},"title_template":{"widget":"text","optional":true},"actions":{"widget":"multi-ref-picker","referenceTo":"Action","multi":true},"bot_templates":{"widget":"multi-ref-picker","referenceTo":"BotTemplate","multi":true}},"PlatformConnector":{"connector_id":{"widget":"text","isPrimaryKey":true},"api_base_url":{"widget":"text","optional":true},"authentication_method":{"widget":"select","options":["APP_AUTH","NONE","SECRET","TOKEN"]},"connector_type":{"widget":"select","options":["ENTERPRISE_MESSAGE_NOTIFICATION","GITHUB_APP","GITHUB_TOKEN","GITLAB_TOKEN","WEBHOOK_INPUT","WEBHOOK_OUTPUT"]},"is_enabled":{"widget":"toggle"},"name":{"widget":"text"},"remark":{"widget":"text","optional":true},"retry_count":{"widget":"number"},"retry_interval_seconds":{"widget":"number"},"secret_ref":{"widget":"secret","sensitive":true},"signature_validation_enabled":{"widget":"toggle"},"timeout_seconds":{"widget":"number"},"community_organizations":{"widget":"multi-ref-picker","referenceTo":"CommunityOrganization","multi":true},"environment":{"widget":"ref-picker","referenceTo":"Environment"}},"SimulationRun":{"simulation_run_id":{"widget":"text","isPrimaryKey":true},"executed_at":{"widget":"datetime-picker"},"name":{"widget":"text"},"result_status":{"widget":"select","options":["FAILED","SUCCESS","WARNING"]},"review_record_retained":{"widget":"toggle"},"sample_event_payload_ref":{"widget":"text","optional":true},"summary":{"widget":"text","optional":true},"bot_instance":{"widget":"ref-picker","referenceTo":"BotInstance"}},"ConfigurationPackage":{"configuration_package_id":{"widget":"text","isPrimaryKey":true},"contains_plaintext_secrets":{"widget":"toggle"},"exported_at":{"widget":"datetime-picker"},"package_name":{"widget":"text"},"package_version":{"widget":"text"},"compatibility_reports":{"widget":"multi-ref-picker","referenceTo":"CompatibilityReport","multi":true}},"CompatibilityReport":{"compatibility_report_id":{"widget":"text","isPrimaryKey":true},"generated_at":{"widget":"datetime-picker"},"overall_status":{"widget":"select","options":["COMPATIBLE","INCOMPATIBLE","PARTIALLY_COMPATIBLE"]},"summary":{"widget":"text","optional":true},"configuration_package":{"widget":"ref-picker","referenceTo":"ConfigurationPackage"}}};
+
+    const INITIAL_M1_FALLBACK = {"Action":[{"name":"Post Welcome Comment","execution_order":1,"action_type":"POST_COMMENT","description":"Post a friendly welcome comment for first-time contributors.","action_id":"action_post_welcome_comment","requires_approval":false,"message_template":"msg_welcome_comment","rule":"rule_first_pr_welcome","approval_policy":"appr_high_risk_actions","notification_target":"nt_maintainer_channel"},{"name":"Add Needs Triage Label","execution_order":1,"action_type":"ADD_LABEL","description":"Add needs-triage label to newly created issues missing triage metadata.","action_id":"action_add_needs_triage","requires_approval":false,"message_template":"msg_triage_notice","rule":"rule_issue_missing_triage_label","approval_policy":"appr_high_risk_actions","notification_target":"nt_maintainer_channel"}],"ApprovalPolicy":[{"name":"High Risk Action Approval","approval_timeout_seconds":86400,"description":"Approval required for high-risk actions such as closing issues automatically.","applicable_action_type":"CLOSE_ISSUE_OR_PR","timeout_handling":"MARK_PENDING","approval_policy_id":"appr_high_risk_actions","risk_level":"HIGH","allow_auto_downgrade_to_low_risk_alternative":true}],"AutomationProject":[{"created_at":"2025-01-10T09:00:00Z","description":"Cross-platform automation project for an OSS foundation.","updated_at":"2025-02-20T15:30:00Z","project_id":"proj_oss_foundation_bot","version":"1.0.0","status":"ACTIVE","name":"OSS Foundation Community Bot Orchestration"}],"BotInstance":[{"priority":100,"remark":"Enabled for public code repositories.","name":"Foundation Welcome Bot","is_enabled":true,"scope":"REPOSITORY_SET","risk_approval_required":false,"instance_id":"botinst_welcome","bot_template":"bottpl_new_contributor_welcome","repositories":["repo_core_api","repo_docs_hub"]}]};
+
+    const ENTITY_ORDER = ["AutomationProject","Environment","PlatformConnector","CommunityOrganization","Repository","BotTemplate","BotInstance","EventTrigger","Rule","Action","MessageTemplate","NotificationTarget","ApprovalPolicy","ScheduleTask","SimulationRun","ConfigurationPackage","CompatibilityReport"];
+    const ICONS = {"AutomationProject":"⚙","Environment":"🌐","PlatformConnector":"🔌","CommunityOrganization":"🏢","Repository":"📦","BotTemplate":"🤖","BotInstance":"▶","EventTrigger":"⚡","Rule":"📐","Action":"🎯","MessageTemplate":"💬","NotificationTarget":"📢","ApprovalPolicy":"🛡","ScheduleTask":"⏰","SimulationRun":"🧪","ConfigurationPackage":"📋","CompatibilityReport":"✅"};
+
+    function getIdField(entityType, hintsMap) {
+      const hints = hintsMap[entityType] || {};
+      for (const [k, v] of Object.entries(hints)) {
+        if (v.isPrimaryKey) return k;
+      }
+      return null;
+    }
+
+    function getInstanceLabel(entityType, inst, hintsMap) {
+      return inst?.name || inst?.[getIdField(entityType, hintsMap)] || "(unnamed)";
+    }
+
+    function FieldWidget({ fieldName, hint, value, onChange, allData, hintsMap }) {
+      const w = hint?.widget || "text";
+      const label = fieldName.replace(/_/g, " ");
+
+      if (w === "toggle") {
+        return (
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <div onClick={() => onChange(!value)} className={`relative w-10 h-5 rounded-full transition-colors ${value ? "bg-emerald-500" : "bg-zinc-600"}`}>
+              <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${value ? "translate-x-5" : "translate-x-0.5"}`}/>
+            </div>
+            <span className="text-xs text-zinc-300">{label}</span>
+          </label>
+        );
+      }
+
+      if (w === "select") {
+        return (
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-zinc-500 uppercase tracking-wider">{label}</label>
+            <select value={value || ""} onChange={e => onChange(e.target.value)} className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-sm text-zinc-200 focus:border-amber-500 focus:outline-none">
+              <option value="">—</option>
+              {(hint.options || []).map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          </div>
+        );
+      }
+
+      if (w === "number") {
+        return (
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-zinc-500 uppercase tracking-wider">{label}</label>
+            <input type="number" value={value ?? ""} onChange={e => onChange(e.target.value === "" ? null : Number(e.target.value))} className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-sm text-zinc-200 focus:border-amber-500 focus:outline-none"/>
+          </div>
+        );
+      }
+
+      if (w === "secret") {
+        return (
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-zinc-500 uppercase tracking-wider">🔒 {label}</label>
+            <input type="password" value={value || ""} onChange={e => onChange(e.target.value)} className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-sm text-amber-400 font-mono focus:border-amber-500 focus:outline-none"/>
+          </div>
+        );
+      }
+
+      if (w === "datetime-picker") {
+        return (
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-zinc-500 uppercase tracking-wider">{label}</label>
+            <input type="text" value={value || ""} onChange={e => onChange(e.target.value)} placeholder="2025-01-01T00:00:00Z" className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-sm text-zinc-200 font-mono focus:border-amber-500 focus:outline-none"/>
+          </div>
+        );
+      }
+
+      if (w === "ref-picker") {
+        const refType = hint.referenceTo;
+        const refInstances = allData[refType] || [];
+        const refIdField = getIdField(refType, hintsMap);
+        return (
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-zinc-500 uppercase tracking-wider">→ {label}</label>
+            <select value={value || ""} onChange={e => onChange(e.target.value)} className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-sm text-cyan-300 focus:border-amber-500 focus:outline-none">
+              <option value="">—</option>
+              {refInstances.map(ri => {
+                const id = ri[refIdField] || "";
+                return <option key={id} value={id}>{ri.name || id}</option>;
+              })}
+            </select>
+          </div>
+        );
+      }
+
+      if (w === "multi-ref-picker") {
+        const refType = hint.referenceTo;
+        const refInstances = allData[refType] || [];
+        const refIdField = getIdField(refType, hintsMap);
+        const selected = Array.isArray(value) ? value : [];
+        const toggle = (id) => {
+          if (selected.includes(id)) onChange(selected.filter(x => x !== id));
+          else onChange([...selected, id]);
+        };
+        return (
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-zinc-500 uppercase tracking-wider">→ {label} ({selected.length})</label>
+            <div className="flex flex-wrap gap-1">
+              {refInstances.map(ri => {
+                const id = ri[refIdField] || "";
+                const active = selected.includes(id);
+                return (
+                  <button type="button" key={id} onClick={() => toggle(id)} className={`text-xs px-2 py-0.5 rounded border transition-colors ${active ? "bg-cyan-900 border-cyan-500 text-cyan-200" : "bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-zinc-500"}`}>
+                    {ri.name || id}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        );
+      }
+
+      const isLong = typeof value === "string" && value.length > 60;
+      if (isLong) {
+        return (
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-zinc-500 uppercase tracking-wider">{label}</label>
+            <textarea value={value || ""} onChange={e => onChange(e.target.value)} rows={3} className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-sm text-zinc-200 focus:border-amber-500 focus:outline-none resize-y"/>
+          </div>
+        );
+      }
+      return (
+        <div className="flex flex-col gap-1">
+          <label className="text-xs text-zinc-500 uppercase tracking-wider">{label}</label>
+          <input type="text" value={value ?? ""} onChange={e => onChange(e.target.value)} className={`bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-sm text-zinc-200 focus:border-amber-500 focus:outline-none ${hint?.isPrimaryKey ? "font-mono text-amber-400" : ""}`} readOnly={hint?.readOnly}/>
+        </div>
+      );
+    }
+
+    function ConfigWorkbench() {
+  const [data, setData] = useState(INITIAL_M1_FALLBACK);
+  const [wrapperSchema, setWrapperSchema] = useState({});
+  const [fieldGroups, setFieldGroups] = useState(FIELD_GROUPS_FALLBACK);
+  const [editorHints, setEditorHints] = useState(EDITOR_HINTS_FALLBACK);
+
+  const [selectedType, setSelectedType] = useState("AutomationProject");
+  const [selectedIdx, setSelectedIdx] = useState(0);
+  const [collapsedGroups, setCollapsedGroups] = useState({});
+
+  const [chatMessages, setChatMessages] = useState([
+    {
+      role: "system",
+      text:
+        "MDE Config Assistant ready.\n" +
+        "• 直接输入修改需求：生成结构化 patch\n" +
+        "• 输入 simulate PULL_REQUEST_CREATED：调用真实 simulate 接口\n" +
+        "• 输入 confirm / cancel：确认或取消待应用 patch\n" +
+        "• 上方“文本生成实例”可把自然语言直接生成 M1 并导入界面"
+    }
+  ]);
+  const [chatInput, setChatInput] = useState("");
+  const [pendingPatch, setPendingPatch] = useState(null);
+  const [patchLog, setPatchLog] = useState([]);
+  const [status, setStatus] = useState("Loading artifacts from backend...");
+  const [busy, setBusy] = useState(false);
+
+  const [instancePrompt, setInstancePrompt] = useState("");
+  const [llmProvider, setLlmProvider] = useState("openai");
+  const [llmModel, setLlmModel] = useState("gpt-5.4");
+  const [apiKey, setApiKey] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
+
+  const chatEndRef = useRef(null);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chatMessages]);
+
+  useEffect(() => {
+    (async () => {
+      const [ws, fg, eh, m1] = await Promise.all([
+        fetchJsonOrFallback("/schema/wrapper", {}),
+        fetchJsonOrFallback("/schema/field-groups", FIELD_GROUPS_FALLBACK),
+        fetchJsonOrFallback("/schema/editor-hints", EDITOR_HINTS_FALLBACK),
+        fetchJsonOrFallback("/config/m1", INITIAL_M1_FALLBACK),
+      ]);
+      setWrapperSchema(ws || {});
+      setFieldGroups(fg || FIELD_GROUPS_FALLBACK);
+      setEditorHints(eh || EDITOR_HINTS_FALLBACK);
+      setData(m1 || INITIAL_M1_FALLBACK);
+
+      const firstType =
+        ENTITY_ORDER.find(et => Array.isArray((m1 || {})[et]) && (m1 || {})[et].length > 0) ||
+        "AutomationProject";
+      setSelectedType(firstType);
+      setSelectedIdx(0);
+      setStatus("Loaded artifacts.");
+    })();
+  }, []);
+
+  const instances = data[selectedType] || [];
+  const instance = instances[selectedIdx] || null;
+  const groups = fieldGroups[selectedType] || [];
+  const hints = editorHints[selectedType] || {};
+
+  const cloneDeep = (obj) => JSON.parse(JSON.stringify(obj));
+
+  const addAssistantMessage = (text) => {
+    setChatMessages(prev => [...prev, { role: "assistant", text }]);
+  };
+
+  const appendDiffToPatchLog = (diff) => {
+    if (!Array.isArray(diff) || !diff.length) return;
+    setPatchLog(prev => [
+      ...prev,
+      ...diff.map(d => ({
+        op: d.op,
+        path: d.path,
+        value: d.new_value,
+        old_value: d.old_value,
+        ts: Date.now(),
+      })),
+    ]);
+  };
+
+  const pickFirstEntityType = (nextData) => {
+    return (
+      ENTITY_ORDER.find(et => Array.isArray(nextData?.[et]) && nextData[et].length > 0) ||
+      ENTITY_ORDER[0]
+    );
+  };
+
+  const updateField = (field, val) => {
+    const next = cloneDeep(data);
+    if (next[selectedType]?.[selectedIdx]) {
+      next[selectedType][selectedIdx][field] = val;
+      setData(next);
+      setPatchLog(prev => [
+        ...prev,
+        {
+          op: "replace",
+          path: `/${selectedType}/${selectedIdx}/${field}`,
+          value: val,
+          ts: Date.now(),
+        },
+      ]);
+    }
+  };
+
+  const toggleGroup = (key) => {
+    setCollapsedGroups(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const saveConfig = async () => {
+    try {
+      setBusy(true);
+      setStatus("Saving m1_config.json ...");
+      const res = await fetch("/config/m1", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setStatus("Saved m1_config.json");
+    } catch (e) {
+      console.error(e);
+      setStatus(`Save failed: ${e.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const buildPatchPreviewText = (payload) => {
+    const ops = payload?.patch?.operations || [];
+    const warnings = payload?.warnings || [];
+    const errors = payload?.validation_summary?.errors || [];
+    const valid = payload?.validation_summary?.is_valid;
+
+    const lines = [];
+    lines.push("📋 Patch Preview");
+    lines.push(`状态: ${valid ? "VALID" : "INVALID"}`);
+    lines.push("");
+
+    if (ops.length) {
+      lines.push("Operations:");
+      ops.forEach(op => {
+        lines.push(`- ${String(op.op || "").toUpperCase()} ${op.path} → ${JSON.stringify(op.value)}`);
+        if (op.reason) lines.push(`  reason: ${op.reason}`);
+      });
+    } else {
+      lines.push("No operations generated.");
+    }
+
+    if (warnings.length) {
+      lines.push("");
+      lines.push("Warnings:");
+      warnings.forEach(w => lines.push(`- ${w}`));
+    }
+
+    if (errors.length) {
+      lines.push("");
+      lines.push("Errors:");
+      errors.forEach(err => lines.push(`- ${err}`));
+    }
+
+    if (ops.length && valid) {
+      lines.push("");
+      lines.push('输入 "confirm" 应用，输入 "cancel" 放弃。');
+    }
+
+    return lines.join("\n");
+  };
+
+  const extractEventType = (msg) => {
+    const upper = msg.toUpperCase();
+
+    for (const ev of ENUMS.EventType || []) {
+      if (upper.includes(ev)) return ev;
+    }
+
+    const aliases = {
+      "PR_CREATED": "PULL_REQUEST_CREATED",
+      "PULL_REQUEST": "PULL_REQUEST_CREATED",
+      "ISSUE_CREATED": "ISSUE_CREATED",
+      "RELEASE_CREATED": "RELEASE_CREATED",
+      "COMMENT_CREATED": "COMMENT_CREATED",
+      "REVIEW_SUBMITTED": "REVIEW_SUBMITTED",
+      "SCHEDULE": "SCHEDULE_TRIGGERED",
+      "SCHEDULE_TRIGGER": "SCHEDULE_TRIGGERED",
+      "WEBHOOK": "EXTERNAL_WEBHOOK_TRIGGERED",
+      "MR_CREATED": "MERGE_REQUEST_CREATED",
+      "MERGE_REQUEST": "MERGE_REQUEST_CREATED",
+    };
+
+    for (const [k, v] of Object.entries(aliases)) {
+      if (upper.includes(k)) return v;
+    }
+    return null;
+  };
+
+  const handleGenerateInstances = async () => {
+    const prompt = instancePrompt.trim();
+    if (!prompt) return;
+
+    try {
+      setBusy(true);
+      setStatus("Generating M1 instances from text ...");
+      const res = await fetch("/besser_api/instances/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          document_text: prompt,
+          wrapper_schema: wrapperSchema,
+          provider: llmProvider,
+          model: llmModel,
+          api_key: apiKey || null,
+          base_url: baseUrl || null,
+        }),
+      });
+
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload?.detail || `HTTP ${res.status}`);
+
+      const nextData = payload.m1_config || {};
+      setData(nextData);
+      setPendingPatch(null);
+
+      const firstType = pickFirstEntityType(nextData);
+      setSelectedType(firstType);
+      setSelectedIdx(0);
+
+      addAssistantMessage(
+        "✅ 已通过 /besser_api/instances/generate 生成实例并导入当前 Workbench。\n" +
+        `实体计数: ${JSON.stringify(payload.entity_counts || {}, null, 2)}`
+      );
+      setStatus("Generated M1 instances and imported into Workbench.");
+    } catch (e) {
+      console.error(e);
+      addAssistantMessage(`❌ 实例生成失败: ${e.message}`);
+      setStatus(`Instance generation failed: ${e.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleGeneratePatch = async (msg) => {
+    try {
+      setBusy(true);
+      setStatus("Generating patch from natural language ...");
+
+      const res = await fetch("/besser_api/config/patch/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          wrapper_schema: wrapperSchema,
+          current_config: data,
+          change_request: msg,
+          provider: llmProvider,
+          model: llmModel,
+          api_key: apiKey || null,
+          base_url: baseUrl || null,
+        }),
+      });
+
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload?.detail || `HTTP ${res.status}`);
+
+      setPendingPatch(payload.patch || null);
+      addAssistantMessage(buildPatchPreviewText(payload));
+      setStatus("Patch preview generated.");
+    } catch (e) {
+      console.error(e);
+      addAssistantMessage(`❌ Patch 生成失败: ${e.message}`);
+      setStatus(`Patch generation failed: ${e.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleApplyPendingPatch = async () => {
+    if (!pendingPatch) {
+      addAssistantMessage("⚠️ 当前没有待应用 patch。");
+      return;
+    }
+
+    try {
+      setBusy(true);
+      setStatus("Applying patch ...");
+
+      const res = await fetch("/besser_api/config/patch/apply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          current_config: data,
+          patch: pendingPatch,
+          wrapper_schema: wrapperSchema,
+        }),
+      });
+
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload?.detail || `HTTP ${res.status}`);
+
+      if (payload.validation_errors?.length) {
+        addAssistantMessage(
+          "❌ Patch apply 被拒绝：\n" + payload.validation_errors.map(x => `- ${x}`).join("\n")
+        );
+        setStatus("Patch apply rejected.");
+        return;
+      }
+
+      setData(payload.updated_config || data);
+      appendDiffToPatchLog(payload.diff || []);
+      setPendingPatch(null);
+
+      const nextData = payload.updated_config || data;
+      const nextInstances = nextData[selectedType] || [];
+      if (selectedIdx >= nextInstances.length) {
+        setSelectedIdx(Math.max(0, nextInstances.length - 1));
+      }
+
+      const diffText = (payload.diff || [])
+        .map(d => `- ${String(d.op || "").toUpperCase()} ${d.path}: ${JSON.stringify(d.old_value)} → ${JSON.stringify(d.new_value)}`)
+        .join("\n");
+
+      addAssistantMessage(
+        "✅ Patch 已应用。\n" + (diffText ? `\n${diffText}` : "")
+      );
+      setStatus("Patch applied.");
+    } catch (e) {
+      console.error(e);
+      addAssistantMessage(`❌ Patch apply 失败: ${e.message}`);
+      setStatus(`Patch apply failed: ${e.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleCancelPendingPatch = () => {
+    setPendingPatch(null);
+    addAssistantMessage("❌ 已取消待应用 patch。");
+    setStatus("Pending patch cancelled.");
+  };
+
+  const handleSimulateMessage = async (msg) => {
+    const eventType = extractEventType(msg);
+    if (!eventType) {
+      addAssistantMessage(
+        "⚠️ 无法识别事件类型。请用例如：simulate PULL_REQUEST_CREATED"
+      );
+      return;
+    }
+
+    try {
+      setBusy(true);
+      setStatus(`Simulating ${eventType} ...`);
+
+      const sampleEvent = {
+        event_type: eventType,
+        trigger_type: eventType,
+        name: eventType,
+        payload: {},
+      };
+
+      const res = await fetch("/besser_api/bots/simulate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sample_event: sampleEvent,
+          config: data,
+          wrapper_schema: wrapperSchema,
+        }),
+      });
+
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload?.detail || `HTTP ${res.status}`);
+
+      addAssistantMessage(
+        "🧪 Simulation Result\n" +
+        JSON.stringify(payload, null, 2)
+      );
+      setStatus(`Simulation finished: ${eventType}`);
+    } catch (e) {
+      console.error(e);
+      addAssistantMessage(`❌ Simulation 失败: ${e.message}`);
+      setStatus(`Simulation failed: ${e.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleChat = async () => {
+    if (!chatInput.trim() || busy) return;
+
+    const msg = chatInput.trim();
+    setChatMessages(prev => [...prev, { role: "user", text: msg }]);
+    setChatInput("");
+
+    if (/^(confirm|apply)$/i.test(msg)) {
+      await handleApplyPendingPatch();
+      return;
+    }
+
+    if (/^(cancel|abort)$/i.test(msg)) {
+      handleCancelPendingPatch();
+      return;
+    }
+
+    if (/^simulate\b/i.test(msg)) {
+      await handleSimulateMessage(msg);
+      return;
+    }
+
+    await handleGeneratePatch(msg);
+  };
+
+  const groupColor = {
+    Identity: "border-amber-500/40",
+    Core: "border-emerald-500/40",
+    Optional: "border-zinc-600/40",
+    Associations: "border-cyan-500/40"
+  };
+  const groupIcon = {
+    Identity: "🔑",
+    Core: "⚡",
+    Optional: "📎",
+    Associations: "🔗"
+  };
+
+  return (
+    <div className="flex h-screen bg-zinc-950 text-zinc-200" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', 'SF Mono', monospace" }}>
+      <div className="w-56 flex-shrink-0 border-r border-zinc-800 flex flex-col">
+        <div className="px-3 py-3 border-b border-zinc-800">
+          <div className="text-xs text-amber-500 font-bold tracking-widest">MDE WORKBENCH</div>
+          <div className="text-xs text-zinc-600 mt-0.5">
+            {Object.values(data).reduce((s, v) => s + (Array.isArray(v) ? v.length : 0), 0)} instances · {ENTITY_ORDER.length} types
+          </div>
+          <div className="text-[10px] text-zinc-500 mt-1">{status}</div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto py-1">
+          {ENTITY_ORDER.map(et => {
+            const insts = data[et] || [];
+            const isActive = et === selectedType;
+            return (
+              <div key={et}>
+                <button
+                  type="button"
+                  onClick={() => { setSelectedType(et); setSelectedIdx(0); }}
+                  className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 transition-colors ${isActive ? "bg-zinc-800 text-amber-400" : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"}`}
+                >
+                  <span>{ICONS[et] || "·"}</span>
+                  <span className="flex-1 truncate">{et}</span>
+                  <span className={`text-xs px-1.5 rounded ${isActive ? "bg-amber-500/20 text-amber-400" : "bg-zinc-800 text-zinc-600"}`}>
+                    {insts.length}
+                  </span>
+                </button>
+
+                {isActive && insts.map((inst, idx) => (
+                  <button
+                    type="button"
+                    key={idx}
+                    onClick={() => setSelectedIdx(idx)}
+                    className={`w-full text-left pl-8 pr-3 py-1 text-xs truncate transition-colors ${idx === selectedIdx ? "text-white bg-zinc-800/60" : "text-zinc-500 hover:text-zinc-300"}`}
+                  >
+                    {getInstanceLabel(et, inst, editorHints)}
+                  </button>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="border-t border-zinc-800 px-3 py-2 flex items-center justify-between gap-2">
+          <div className="text-xs text-zinc-600">Patch log: {patchLog.length} ops</div>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={saveConfig}
+            className="bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white text-xs px-2 py-1 rounded"
+          >
+            Save
+          </button>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto">
+        {instance ? (
+          <div className="max-w-2xl mx-auto py-4 px-6">
+            <div className="flex items-center gap-3 mb-4">
+              <span className="text-2xl">{ICONS[selectedType]}</span>
+              <div>
+                <h2 className="text-lg text-zinc-100">{getInstanceLabel(selectedType, instance, editorHints)}</h2>
+                <div className="text-xs text-zinc-500">
+                  {selectedType} · #{selectedIdx + 1} of {instances.length}
+                </div>
+              </div>
+            </div>
+
+            {groups.map((grp, gi) => {
+              const gKey = `${selectedType}-${grp.group}`;
+              const isCollapsed = collapsedGroups[gKey] ?? grp.collapsed;
+              return (
+                <div key={gi} className={`mb-3 border-l-2 ${groupColor[grp.group] || "border-zinc-700"} rounded-r bg-zinc-900/40`}>
+                  <button
+                    type="button"
+                    onClick={() => toggleGroup(gKey)}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
+                  >
+                    <span>{groupIcon[grp.group] || "·"}</span>
+                    <span className="uppercase tracking-wider font-bold flex-1 text-left">{grp.group}</span>
+                    <span className="text-zinc-600">{grp.fields.length}</span>
+                    <span className="text-zinc-600">{isCollapsed ? "▸" : "▾"}</span>
+                  </button>
+
+                  {!isCollapsed && (
+                    <div className="px-3 pb-3 flex flex-col gap-3">
+                      {grp.fields.map(f => (
+                        <FieldWidget
+                          key={f}
+                          fieldName={f}
+                          hint={hints[f]}
+                          value={instance[f]}
+                          onChange={v => updateField(f, v)}
+                          allData={data}
+                          hintsMap={editorHints}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="flex items-center justify-center h-full text-zinc-600 text-sm">
+            Select an entity type and instance
+          </div>
+        )}
+      </div>
+
+      <div className="w-[380px] flex-shrink-0 border-l border-zinc-800 flex flex-col">
+        <div className="px-3 py-3 border-b border-zinc-800">
+          <div className="text-xs font-bold text-cyan-500 tracking-widest">CONFIG ASSISTANT</div>
+          <div className="text-xs text-zinc-600 mt-0.5">Generate M1 · NL → Patch · Simulate</div>
+        </div>
+
+        <div className="border-b border-zinc-800 p-3 flex flex-col gap-2">
+          <div className="text-[11px] uppercase tracking-wider text-zinc-500">LLM Settings</div>
+          <div className="grid grid-cols-2 gap-2">
+            <input
+              value={llmProvider}
+              onChange={e => setLlmProvider(e.target.value)}
+              placeholder="provider"
+              className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-xs text-zinc-200"
+            />
+            <input
+              value={llmModel}
+              onChange={e => setLlmModel(e.target.value)}
+              placeholder="model"
+              className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-xs text-zinc-200"
+            />
+          </div>
+          <input
+            value={baseUrl}
+            onChange={e => setBaseUrl(e.target.value)}
+            placeholder="base_url (optional)"
+            className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-xs text-zinc-200"
+          />
+          <input
+            value={apiKey}
+            onChange={e => setApiKey(e.target.value)}
+            placeholder="api_key (optional, fallback to env)"
+            className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-xs text-zinc-200"
+          />
+        </div>
+
+        <div className="border-b border-zinc-800 p-3 flex flex-col gap-2">
+          <div className="text-[11px] uppercase tracking-wider text-zinc-500">文本生成实例</div>
+          <textarea
+            value={instancePrompt}
+            onChange={e => setInstancePrompt(e.target.value)}
+            rows={5}
+            placeholder="输入需求片段、补充说明或实例描述，调用 /besser_api/instances/generate ..."
+            className="bg-zinc-800 border border-zinc-700 rounded px-2 py-2 text-xs text-zinc-200 resize-y"
+          />
+          <button
+            type="button"
+            disabled={busy || !instancePrompt.trim()}
+            onClick={handleGenerateInstances}
+            className="bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-xs px-3 py-2 rounded transition-colors"
+          >
+            Generate M1 Into Workbench
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2">
+          {chatMessages.map((msg, i) => (
+            <div
+              key={i}
+              className={`text-xs px-3 py-2 rounded-lg whitespace-pre-wrap ${
+                msg.role === "user"
+                  ? "bg-zinc-800 text-zinc-200 ml-6"
+                  : msg.role === "system"
+                  ? "bg-cyan-950/30 text-cyan-300 border border-cyan-900/50"
+                  : "bg-zinc-900 text-zinc-300 mr-4"
+              }`}
+            >
+              {msg.text}
+            </div>
+          ))}
+          <div ref={chatEndRef} />
+        </div>
+
+        {pendingPatch && (
+          <div className="border-t border-zinc-800 px-3 py-2 flex gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={handleApplyPendingPatch}
+              className="flex-1 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white text-xs px-3 py-2 rounded"
+            >
+              Confirm Apply
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={handleCancelPendingPatch}
+              className="flex-1 bg-zinc-700 hover:bg-zinc-600 disabled:opacity-50 text-white text-xs px-3 py-2 rounded"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+
+        <div className="border-t border-zinc-800 p-2 flex gap-2">
+          <input
+            value={chatInput}
+            onChange={e => setChatInput(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && !e.shiftKey && handleChat()}
+            placeholder='输入修改请求，或 simulate PULL_REQUEST_CREATED，或 confirm/cancel'
+            className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-xs text-zinc-200 focus:border-cyan-500 focus:outline-none"
+          />
+          <button
+            type="button"
+            disabled={busy}
+            onClick={handleChat}
+            className="bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white text-xs px-3 py-1.5 rounded transition-colors"
+          >
+            Send
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<ConfigWorkbench />);
+  </script>
+</body>
+</html>

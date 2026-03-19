@@ -149,7 +149,7 @@ def compile_to_domain_model(
             prop = Property(
                 name=norm_attr.name,
                 type=type_obj,
-                visibility=norm_attr.visibility.value,
+                visibility=norm_attr.visibility or "public",
                 is_id=norm_attr.is_id,
                 is_read_only=norm_attr.is_read_only,
                 is_optional=norm_attr.is_optional,

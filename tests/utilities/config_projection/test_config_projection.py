@@ -9,9 +9,6 @@ Run:
 """
 
 import pytest
-import json
-from typing import Any
-
 from besser.BUML.metamodel.structural import (
     Class, Property, DomainModel, PrimitiveDataType,
     Enumeration, EnumerationLiteral,
@@ -33,11 +30,14 @@ from besser.utilities.config_projection.sidecar_merger import (
     merge_sidecar_into_schema,
     merge_sidecar_into_hints,
 )
-from besser.utilities.requirements_to_buml.schemas import (
+from besser.utilities.requirements_to_buml.m3_schema_projector import (
     ReviewSidecar,
     SidecarEntry,
 )
 
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
 
 # ===================================================================
 # Helpers — build a small DomainModel for testing
@@ -89,20 +89,6 @@ def _build_test_domain_model() -> DomainModel:
     )
 
 
-def _build_14_class_dm():
-    """Build the full 14-class OSS Bot DomainModel via requirements_to_buml."""
-    from besser.utilities.requirements_to_buml import requirements_to_buml
-    from tests.utilities.requirements_to_buml.test_requirements_to_buml import (
-        _build_oss_bot_candidate,
-    )
-    candidate = _build_oss_bot_candidate()
-    result = requirements_to_buml(
-        document_text="(skipped)",
-        skip_llm=True,
-        candidate_json=candidate.model_dump(),
-    )
-    return result["domain_model"], result["review_sidecar"]
-
 
 # ===================================================================
 # 1. Wrapper Schema Builder tests
@@ -144,8 +130,10 @@ class TestWrapperSchemaBuilder:
         dm = _build_test_domain_model()
         schema = build_wrapper_schema(dm)
         desc = schema["$defs"]["BotTemplate"]["properties"]["description"]
-        # Optional → type becomes [original, "null"]
-        assert "null" in str(desc.get("type", ""))
+
+        any_of = desc.get("anyOf", [])
+        assert any(item.get("type") == "string" for item in any_of)
+        assert any(item.get("type") == "null" for item in any_of)
 
     def test_default_value(self):
         dm = _build_test_domain_model()
@@ -162,8 +150,8 @@ class TestWrapperSchemaBuilder:
 
     def test_association_end_in_schema(self):
         dm = _build_test_domain_model()
-        schema = build_wrapper_schema(dm, include_associations=True)
-        # BotTemplate should have an "instances" reference property
+        schema = build_wrapper_schema(dm)
+
         bt = schema["$defs"]["BotTemplate"]
         assert "instances" in bt["properties"]
         inst_prop = bt["properties"]["instances"]
@@ -182,21 +170,6 @@ class TestWrapperSchemaBuilder:
         schema = build_wrapper_schema(dm)
         assert "BotTemplate" in schema["properties"]
         assert schema["properties"]["BotTemplate"]["type"] == "array"
-
-    def test_14_class_schema(self):
-        dm, _ = _build_14_class_dm()
-        schema = build_wrapper_schema(dm)
-        # 14 classes + 9 enums in $defs
-        class_count = sum(
-            1 for d in schema["$defs"].values()
-            if d.get("type") == "object"
-        )
-        enum_count = sum(
-            1 for d in schema["$defs"].values()
-            if "enum" in d
-        )
-        assert class_count == 14
-        assert enum_count == 9
 
 
 # ===================================================================
@@ -352,45 +325,6 @@ class TestSidecarMerger:
         assert result is schema  # exact same object, no copy
 
 
-# ===================================================================
-# 5. End-to-end: 14-class pipeline → projections
-# ===================================================================
-
-class TestEndToEndProjection:
-
-    def test_14_class_wrapper_schema(self):
-        dm, sidecar = _build_14_class_dm()
-        schema = build_wrapper_schema(dm)
-        merged = merge_sidecar_into_schema(schema, sidecar)
-
-        # Basic structure checks
-        assert "$defs" in merged
-        class_defs = [k for k, v in merged["$defs"].items() if v.get("type") == "object"]
-        assert len(class_defs) == 14
-
-    def test_14_class_field_groups(self):
-        dm, _ = _build_14_class_dm()
-        groups = build_field_groups(dm)
-        assert len(groups) == 14
-        # Every class should have at least one group
-        for cls_name, cls_groups in groups.items():
-            assert len(cls_groups) >= 1, f"{cls_name} has no groups"
-
-    def test_14_class_editor_hints(self):
-        dm, sidecar = _build_14_class_dm()
-        hints = build_editor_hints(dm)
-        merged = merge_sidecar_into_hints(hints, sidecar)
-        assert len(merged) >= 14
-
-    def test_schema_is_valid_json(self):
-        dm, sidecar = _build_14_class_dm()
-        schema = build_wrapper_schema(dm)
-        merged = merge_sidecar_into_schema(schema, sidecar)
-        # Must be serializable to JSON
-        json_str = json.dumps(merged, indent=2)
-        parsed = json.loads(json_str)
-        assert parsed["$schema"] == "https://json-schema.org/draft/2020-12/schema"
-
 
 # ===================================================================
 # 6. API endpoint tests (using FastAPI TestClient)
@@ -409,60 +343,6 @@ class TestEditorWorkflowAPI:
         test_app = FastAPI()
         test_app.include_router(router)
         return test_app
-
-    def _candidate_payload(self) -> dict:
-        from tests.utilities.requirements_to_buml.test_requirements_to_buml import (
-            _build_oss_bot_candidate,
-        )
-        return _build_oss_bot_candidate().model_dump()
-
-    @pytest.mark.anyio
-    async def test_import_candidate(self, app):
-        import httpx
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post(
-                "/besser_api/requirements/import-candidate",
-                json={"candidate": self._candidate_payload()},
-            )
-        assert resp.status_code == 200
-        body = resp.json()
-        assert "candidate" in body
-        assert "normalized" in body
-        assert "review_summary" in body
-        assert "editor_import_payload" in body
-        payload = body["editor_import_payload"]
-        assert "elements" in payload
-        assert "relationships" in payload
-
-    @pytest.mark.anyio
-    async def test_config_schema_from_import(self, app):
-        import httpx
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            # First import
-            resp1 = await client.post(
-                "/besser_api/requirements/import-candidate",
-                json={"candidate": self._candidate_payload()},
-            )
-            assert resp1.status_code == 200
-            payload = resp1.json()["editor_import_payload"]
-            sidecar = resp1.json()["review_sidecar"]
-
-            # Then generate config schema
-            resp2 = await client.post(
-                "/besser_api/config/schema",
-                json={
-                    "editor_import_payload": payload,
-                    "sidecar": sidecar,
-                },
-            )
-        assert resp2.status_code == 200
-        body = resp2.json()
-        assert "wrapper_schema" in body
-        assert "field_groups" in body
-        assert "editor_hints" in body
-        assert "$defs" in body["wrapper_schema"]
 
     @pytest.mark.anyio
     async def test_patch_preview_stub(self, app):

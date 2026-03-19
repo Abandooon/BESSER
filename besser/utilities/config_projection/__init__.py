@@ -26,3 +26,7 @@ from besser.utilities.config_projection.editor_hints_builder import (
 from besser.utilities.config_projection.sidecar_merger import (
     merge_sidecar_into_schema,
 )
+from besser.utilities.config_projection.instance_extraction import (
+    extract_instances,
+    build_instance_prompts,
+)

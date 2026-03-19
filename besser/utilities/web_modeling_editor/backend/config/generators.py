@@ -3,6 +3,8 @@ Generator configuration and metadata for the BESSER backend.
 """
 
 from typing import Dict, Any, NamedTuple
+
+from besser.generators.agents import BAFGenerator
 from besser.generators.django import DjangoGenerator
 from besser.generators.python_classes import PythonGenerator
 from besser.generators.java_classes import JavaGenerator
@@ -11,7 +13,6 @@ from besser.generators.sql_alchemy import SQLAlchemyGenerator
 from besser.generators.sql import SQLGenerator
 from besser.generators.backend import BackendGenerator
 from besser.generators.json import JSONSchemaGenerator, JSONObjectGenerator
-from besser.generators.agents.baf_generator import BAFGenerator
 from besser.generators.web_app import WebAppGenerator
 from besser.generators.qiskit import QiskitGenerator
 

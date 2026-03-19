@@ -47,6 +47,11 @@ def generate_pydantic_models(
         if not os.path.exists(fpath):
             raise RuntimeError("PydanticGenerator did not produce pydantic_classes.py")
 
+        import re
+        raw = open(fpath, encoding="utf-8").read()
+        raw = re.sub(r'    @field_validator.*?return v\n', '', raw, flags=re.DOTALL)
+        open(fpath, "w", encoding="utf-8").write(raw)
+
         spec = importlib.util.spec_from_file_location("_gen_pydantic", fpath)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)

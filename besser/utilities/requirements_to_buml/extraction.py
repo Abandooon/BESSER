@@ -47,57 +47,54 @@ def _strip_json_fences(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _call_openai(
-    system_prompt: str, user_prompt: str, *,
-    model: str, api_key: str | None,
-    temperature: float = 0.2, max_tokens: int = 8192,
+    system_prompt: str,
+    user_prompt: str,
+    *,
+    model: str,
+    api_key: str | None,
+    base_url: str | None = "https://api.openai-proxy.org/v1",
+    temperature: float = 1.0
 ) -> str:
     try:
-        import openai
+        from openai import OpenAI
     except ImportError as exc:
-        raise ImportError("pip install openai") from exc
+        raise ImportError("pip install -U openai") from exc
 
     key = api_key or os.environ.get("OPENAI_API_KEY")
     if not key:
         raise ValueError("No OpenAI API key. Pass api_key= or set OPENAI_API_KEY.")
 
-    client = openai.OpenAI(api_key=key)
+    resolved_base_url = (
+        base_url
+        or os.environ.get("OPENAI_BASE_URL")
+        or os.environ.get("OPENAI_API_BASE")
+    )
+
+    client_kwargs = {"api_key": key}
+    if resolved_base_url:
+        client_kwargs["base_url"] = resolved_base_url
+
+    client = OpenAI(**client_kwargs)
+
     resp = client.chat.completions.create(
-        model=model, temperature=temperature, max_tokens=max_tokens,
+        model=model,
+        temperature=temperature,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
         response_format={"type": "json_object"},
     )
-    return resp.choices[0].message.content
 
+    content = resp.choices[0].message.content
+    if not content:
+        raise ValueError("OpenAI response did not contain message content.")
+    return content
 
-def _call_anthropic(
-    system_prompt: str, user_prompt: str, *,
-    model: str, api_key: str | None,
-    temperature: float = 0.2, max_tokens: int = 8192,
-) -> str:
-    try:
-        import anthropic
-    except ImportError as exc:
-        raise ImportError("pip install anthropic") from exc
-
-    key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-    if not key:
-        raise ValueError("No Anthropic API key. Pass api_key= or set ANTHROPIC_API_KEY.")
-
-    client = anthropic.Anthropic(api_key=key)
-    resp = client.messages.create(
-        model=model, system=system_prompt,
-        max_tokens=max_tokens, temperature=temperature,
-        messages=[{"role": "user", "content": user_prompt}],
-    )
-    return "".join(b.text for b in resp.content if hasattr(b, "text"))
 
 
 _PROVIDERS: dict[str, Any] = {
-    "openai": _call_openai,
-    "anthropic": _call_anthropic,
+    "openai": _call_openai
 }
 
 
@@ -109,22 +106,29 @@ def extract_candidate(
     document_text: str,
     *,
     provider: str = "openai",
-    model: str = "gpt-4o",
+    model: str = "gpt-5-nano",
     api_key: str | None = None,
+    base_url: str | None = None,
     domain_hint: str | None = None,
     core_class_hints: str | None = None,
-    temperature: float = 0.2,
-    max_tokens: int = 8192,
+    temperature: float = 1.0
 ) -> CandidateModel:
-    """Extract a ``CandidateModel`` from a natural-language requirements doc.
+    """
+    Extract a ``CandidateModel`` from a natural-language requirements doc.
 
     Parameters
     ----------
+    provider : str
+        Supported providers: "openai".
+    model : str
+        Provider model identifier.
+    api_key : str | None
+        Explicit API key; falls back to environment variable.
+    base_url : str | None
+        Optional OpenAI-compatible endpoint base URL. Used only when
+        ``provider="openai"``.
     domain_hint : str | None
-        Domain-specific guidance.  Can be:
-        - ``None`` → domain-agnostic (default)
-        - A registry key like ``"oss_bot"`` → auto-resolved
-        - Free-text hint
+        Domain-specific guidance. ``None`` means domain-agnostic.
     """
     call_fn = _PROVIDERS.get(provider)
     if call_fn is None:
@@ -142,9 +146,12 @@ def extract_candidate(
     logger.info("Calling %s / %s for candidate extraction …", provider, model)
 
     raw_text = call_fn(
-        system_prompt, user_prompt,
-        model=model, api_key=api_key,
-        temperature=temperature, max_tokens=max_tokens,
+        system_prompt,
+        user_prompt,
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
+        temperature=temperature
     )
 
     cleaned = _strip_json_fences(raw_text)

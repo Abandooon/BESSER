@@ -16,8 +16,8 @@ from besser.generators.agents.agent_personalization import configure_agent, flat
 from besser.utilities.buml_code_builder import (
     agent_model_to_code,
 )
-from besser.utilities.web_modeling_editor.backend.services.converters import agent_buml_to_json
-
+# from besser.utilities.web_modeling_editor.backend.services.converters import agent_buml_to_json
+#
 
 
 class GenerationMode(Enum):
@@ -147,6 +147,10 @@ class BAFGenerator(GeneratorInterface):
             # removed for current release, but leaving code here for now to check later when integrating the personalization
             if False:
                 try:
+                    from besser.utilities.buml_code_builder import agent_model_to_code  # 延迟
+                    from besser.utilities.web_modeling_editor.backend.services.converters import \
+                        agent_buml_to_json  # 延迟
+
                     with open(personalized_agent_path, "r", encoding="utf-8") as f:
                         personalized_code = f.read()
                     personalized_json = agent_buml_to_json(personalized_code)

@@ -33,10 +33,7 @@ from typing import Any
 
 from besser.BUML.metamodel.structural import (
     DomainModel,
-    Class,
-    Property,
     BinaryAssociation,
-    UNLIMITED_MAX_MULTIPLICITY,
 )
 from besser.utilities.config_projection.generator_bridge import (
     generate_base_json_schema,

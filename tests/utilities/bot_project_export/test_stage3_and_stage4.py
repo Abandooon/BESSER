@@ -17,7 +17,9 @@ from besser.utilities.bot_project_export.exporter import export_project
 from besser.utilities.bot_project_export.compatibility import check_compatibility
 from besser.utilities.bot_project_export.importer import validate_import
 
-
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
 # ===================================================================
 # Test data
 # ===================================================================

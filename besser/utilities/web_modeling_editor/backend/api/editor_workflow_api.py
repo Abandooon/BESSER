@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import traceback
 from typing import Any, Optional
 
@@ -63,7 +64,7 @@ class RequirementsImportRequest(BaseModel):
     document_text: str
     domain_hint: Optional[str] = None
     provider: str = "openai"
-    model: str = "gpt-4o"
+    model: str = "gpt-5-nano"
     api_key: Optional[str] = None
 
 
@@ -102,6 +103,16 @@ class PatchPreviewRequest(BaseModel):
     patch: Optional[dict[str, Any]] = None
     context: Optional[dict[str, Any]] = None
 
+class PatchGenerateRequest(BaseModel):
+    """Body for ``POST /config/patch/generate``."""
+    wrapper_schema: dict[str, Any]
+    current_config: dict[str, Any]
+    change_request: str
+    context: Optional[dict[str, Any]] = None
+    provider: str = "openai"
+    model: str = "gpt-5.4"
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
 
 class PatchApplyRequest(BaseModel):
     """Body for ``POST /config/patch/apply``."""
@@ -263,8 +274,219 @@ async def generate_config_schema_from_model(input_data: dict[str, Any]):
 
 
 # ===================================================================
+# 2b. Instance generation endpoint (Stage 3)
+# ===================================================================
+
+class InstanceGenerateRequest(BaseModel):
+    """Body for ``POST /instances/generate``."""
+    document_text: str = ""
+    wrapper_schema: dict[str, Any]
+    provider: str = "openai"
+    model: str = "gpt-5.4"
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+    instance_hints: Optional[str] = None
+
+
+@router.post("/instances/generate")
+async def generate_instances(req: InstanceGenerateRequest):
+    """Generate M1 configuration instances via LLM constrained by wrapper schema.
+
+    Input: wrapper_schema (from /config/schema) + original requirements doc.
+    Output: M1 instance JSON conforming to the schema.
+    """
+    try:
+        from besser.utilities.config_projection.instance_extraction import extract_instances
+
+        m1_config = extract_instances(
+            document_text=req.document_text,
+            wrapper_schema=req.wrapper_schema,
+            provider=req.provider,
+            model=req.model,
+            api_key=req.api_key,
+            base_url=req.base_url,
+            instance_hints=req.instance_hints,
+        )
+        return {"m1_config": m1_config, "entity_counts": {
+            k: len(v) for k, v in m1_config.items() if isinstance(v, list)
+        }}
+    except Exception as e:
+        logger.error("Instance generation failed: %s\n%s", e, traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Instance generation failed: {e}")
+
+def _summarize_current_config(current_config: dict[str, Any]) -> str:
+    lines: list[str] = []
+    for entity_type, instances in current_config.items():
+        if not isinstance(instances, list):
+            continue
+        labels = []
+        for idx, inst in enumerate(instances):
+            if not isinstance(inst, dict):
+                labels.append(f"{idx}:<non-dict>")
+                continue
+            label = inst.get("name")
+            if not label:
+                id_field = next((k for k in inst.keys() if k.endswith("_id")), None)
+                label = inst.get(id_field) if id_field else f"{entity_type}[{idx}]"
+            labels.append(f"{idx}:{label}")
+        lines.append(f"{entity_type}: {labels}")
+    return "\n".join(lines)
+
+
+def _summarize_wrapper_schema(wrapper_schema: dict[str, Any]) -> str:
+    lines: list[str] = []
+    for def_name, def_schema in wrapper_schema.get("$defs", {}).items():
+        props = list((def_schema.get("properties") or {}).keys())
+        if props:
+            lines.append(f"{def_name}: {props}")
+    return "\n".join(lines)
+
+
+def _extract_json_object(raw_text: str) -> dict[str, Any]:
+    text = (raw_text or "").strip()
+
+    if text.startswith("```"):
+        text = text.strip("`").strip()
+        if text.lower().startswith("json"):
+            text = text[4:].strip()
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        text = text[start:end + 1]
+
+    data = json.loads(text)
+    if not isinstance(data, dict):
+        raise ValueError("LLM output is not a JSON object.")
+    return data
+
+
+def _generate_patch_from_nl(req: PatchGenerateRequest) -> dict[str, Any]:
+    if req.provider.lower() != "openai":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported provider '{req.provider}'. Only 'openai' is wired here."
+        )
+
+    try:
+        from openai import OpenAI
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"OpenAI client import failed: {e}"
+        )
+
+    api_key = req.api_key or os.environ.get("OPENAI_API_KEY")
+    base_url = req.base_url or os.environ.get("OPENAI_BASE_URL")
+    model = req.model or os.environ.get("OPENAI_MODEL", "gpt-5.4")
+
+    if not api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="OPENAI_API_KEY is missing. Provide api_key or set env."
+        )
+
+    fields_str = _summarize_wrapper_schema(req.wrapper_schema)
+    entities_str = _summarize_current_config(req.current_config)
+    context_str = json.dumps(req.context or {}, ensure_ascii=False, indent=2)
+
+    system_prompt = f"""You are an MDE configuration assistant.
+
+The user wants to modify an M1 configuration instance.
+
+The wrapper schema exposes these entity types and editable fields:
+{fields_str}
+
+Current instances:
+{entities_str}
+
+Optional extra context:
+{context_str}
+
+Return ONLY one JSON object with this structure:
+{{
+  "operations": [
+    {{
+      "op": "replace",
+      "path": "/<EntityType>/<array_index>/<field_name>",
+      "value": <new_value>,
+      "reason": "<short reason>"
+    }}
+  ],
+  "metadata": {{
+    "source": "chat",
+    "schemaVersion": "v1"
+  }}
+}}
+
+Rules:
+- path must use /<EntityType>/<array_index>/<field_name>
+- allowed op values: replace, add, remove
+- choose the correct existing array index from Current instances
+- do NOT invent entity types or fields not present in the wrapper schema
+- if the user asks for a sensitive value (token/secret/password/credential), output a reference-like value such as "my_secret_ref"
+- output ONLY JSON, no markdown, no explanation
+"""
+
+    client = OpenAI(api_key=api_key, base_url=base_url)
+    try:
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": req.change_request},
+            ],
+            response_format={"type": "json_object"},
+        )
+        raw = resp.choices[0].message.content or ""
+        patch = _extract_json_object(raw)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"LLM patch generation failed: {e}"
+        )
+
+    if "operations" not in patch or not isinstance(patch["operations"], list):
+        raise HTTPException(
+            status_code=422,
+            detail="LLM patch generation returned invalid patch JSON."
+        )
+
+    patch.setdefault("metadata", {})
+    patch["metadata"].setdefault("source", "chat")
+    patch["metadata"].setdefault("provider", req.provider)
+    patch["metadata"].setdefault("model", model)
+    patch["metadata"].setdefault("schemaVersion", "v1")
+    return patch
+
+# ===================================================================
 # 3. Patch endpoints (Stage 3)
 # ===================================================================
+@router.post("/config/patch/generate")
+async def patch_generate(req: PatchGenerateRequest):
+    """Generate a structured patch from a natural-language change request,
+    then validate it against the wrapper schema."""
+    from besser.utilities.config_projection.patch_engine import (
+        parse_patch, validate_patch,
+    )
+
+    patch = _generate_patch_from_nl(req)
+    operations = parse_patch(patch)
+    validation = validate_patch(operations, req.wrapper_schema, req.current_config)
+
+    return {
+        "patch": patch,
+        "affected_fields": validation["affected_fields"],
+        "warnings": validation["warnings"],
+        "validation_summary": {
+            "is_valid": validation["is_valid"],
+            "errors": validation["errors"],
+            "warnings": validation["warnings"],
+        },
+    }
+
 
 @router.post("/config/patch/preview")
 async def patch_preview(req: PatchPreviewRequest):
@@ -273,24 +495,13 @@ async def patch_preview(req: PatchPreviewRequest):
     from besser.utilities.config_projection.patch_engine import (
         parse_patch, validate_patch,
     )
-    operations = parse_patch(req.patch if isinstance(req.patch, dict) else {"operations": []})
 
-    # If change_request is a natural-language string and no operations
-    # are provided, return a hint that LLM integration is pending.
-    if not operations and req.change_request:
-        return {
-            "patch": {"operations": [], "metadata": {"source": "chat", "schemaVersion": "v1"}},
-            "affected_fields": [],
-            "warnings": [
-                "Natural-language patch generation requires LLM integration "
-                "(not yet wired). Please provide structured operations."
-            ],
-            "validation_summary": {"is_valid": True, "errors": [], "warnings": []},
-        }
+    raw_patch = req.patch if isinstance(req.patch, dict) else {"operations": []}
+    operations = parse_patch(raw_patch)
 
     validation = validate_patch(operations, req.wrapper_schema, req.current_config)
     return {
-        "patch": req.patch if isinstance(req.patch, dict) else {"operations": []},
+        "patch": raw_patch,
         "affected_fields": validation["affected_fields"],
         "warnings": validation["warnings"],
         "validation_summary": {

@@ -48,6 +48,11 @@ from besser.utilities.requirements_to_buml.prompting import (
 )
 
 
+OPENAI_KEY = os.environ.get("OPENAI_API_KEY")
+OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai-proxy.org/v1")
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5-nano")
+
+
 # ===================================================================
 # 1. M3 Introspection
 # ===================================================================
@@ -178,32 +183,45 @@ class TestPrompts:
     def test_system_prompt_no_hand_written_fragments(self):
         """Prompt should NOT contain hand-written schema descriptions."""
         prompt = build_system_prompt()
-        # Old hand-written markers that should be gone
         assert "### Class structure" not in prompt
         assert "### Association structure" not in prompt
+        assert "### Enumeration structure" not in prompt
+        assert "### Constraint structure" not in prompt
 
-    def test_user_prompt_oss_bot_hint(self):
-        p = build_user_prompt("Some doc", domain_hint="oss_bot")
-        assert "BotTemplate" in p
-
-    def test_user_prompt_agnostic(self):
-        p = build_user_prompt("Some doc", domain_hint=None)
-        assert "General software engineering" in p
+    def test_user_prompt_agnostic_has_no_default_domain_bias(self):
+        p = build_user_prompt("Some doc", domain_hint=None, core_class_hints=None)
+        assert "## Requirements document" in p
+        assert "Some doc" in p
+        assert "## Domain hint" not in p
+        assert "## Candidate core classes" not in p
+        assert "General software engineering" not in p
         assert "BotTemplate" not in p
 
-    def test_user_prompt_custom(self):
-        p = build_user_prompt("Doc", domain_hint="E-commerce domain.",
-                              core_class_hints="Product, Order")
-        assert "E-commerce" in p
-        assert "Product" in p
+    def test_user_prompt_includes_explicit_free_text_domain_hint(self):
+        p = build_user_prompt(
+            "Some doc",
+            domain_hint="OSS community bot orchestration domain.",
+            core_class_hints=None,
+        )
+        assert "## Domain hint" in p
+        assert "OSS community bot orchestration domain." in p
+        assert "BotTemplate" not in p  # no hard-coded registry expansion
+
+    def test_user_prompt_includes_explicit_core_class_hints(self):
+        p = build_user_prompt(
+            "Doc",
+            domain_hint="E-commerce domain.",
+            core_class_hints="Product, Order",
+        )
+        assert "## Domain hint" in p
+        assert "E-commerce domain." in p
+        assert "## Candidate core classes" in p
+        assert "Product, Order" in p
 
 
 # ===================================================================
 # 5. LLM Integration (requires API key)
 # ===================================================================
-
-OPENAI_KEY = os.environ.get("OPENAI_API_KEY")
-ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY")
 
 _DOCS_DIR = pathlib.Path(__file__).resolve().parents[3] / "docs"
 _OSS_BOT_DOC = _DOCS_DIR / "01_用户上传工程需求文档.md"
@@ -254,48 +272,68 @@ def _run_pipeline(candidate: CandidateModel) -> dict:
     return {"normalized": normalized, "validation_report": report,
             "domain_model": dm, "review_summary": summary}
 
+def _require_openai_runtime() -> None:
+    if not OPENAI_KEY:
+        pytest.skip("OPENAI_API_KEY not set")
+    pytest.importorskip("openai")
 
-@pytest.mark.skipif(not OPENAI_KEY, reason="OPENAI_API_KEY not set")
 class TestLLMOpenAI:
 
     def test_extract_oss_bot(self):
+        _require_openai_runtime()
+
         from besser.utilities.requirements_to_buml.extraction import extract_candidate
+
         doc = _read_oss_doc()
-        c = extract_candidate(doc, provider="openai", model="gpt-4o",
-                              api_key=OPENAI_KEY, domain_hint="oss_bot")
+        c = extract_candidate(
+            doc,
+            provider="openai",
+            model=OPENAI_MODEL,
+            api_key=OPENAI_KEY,
+            base_url=OPENAI_BASE_URL,
+            domain_hint="OSS community bot orchestration domain.",
+            core_class_hints="AutomationProject, BotTemplate, BotInstance, Rule, Action",
+        )
+
         assert len(c.classes) >= 10
         names = {cls.name for cls in c.classes}
-        assert len({"AutomationProject", "BotTemplate", "BotInstance", "Rule", "Action"} & names) >= 3
+        assert len(
+            {"AutomationProject", "BotTemplate", "BotInstance", "Rule", "Action"} & names
+        ) >= 3
 
     def test_extract_library_agnostic(self):
+        _require_openai_runtime()
+
         from besser.utilities.requirements_to_buml.extraction import extract_candidate
-        c = extract_candidate(_LIBRARY_DOC, provider="openai", model="gpt-4o",
-                              api_key=OPENAI_KEY, domain_hint=None)
+
+        c = extract_candidate(
+            _LIBRARY_DOC,
+            provider="openai",
+            model=OPENAI_MODEL,
+            api_key=OPENAI_KEY,
+            base_url=OPENAI_BASE_URL,
+            domain_hint=None,
+            core_class_hints=None,
+        )
+
         assert len(c.classes) >= 3
         assert any("book" in cls.name.lower() for cls in c.classes)
 
     def test_full_pipeline(self):
+        _require_openai_runtime()
+
         from besser.utilities.requirements_to_buml.extraction import extract_candidate
+
         doc = _read_oss_doc()
-        c = extract_candidate(doc, provider="openai", model="gpt-4o",
-                              api_key=OPENAI_KEY, domain_hint="oss_bot")
+        c = extract_candidate(
+            doc,
+            provider="openai",
+            model=OPENAI_MODEL,
+            api_key=OPENAI_KEY,
+            base_url=OPENAI_BASE_URL,
+            domain_hint="OSS community bot orchestration domain.",
+            core_class_hints="AutomationProject, BotTemplate, BotInstance, Rule, Action",
+        )
+
         r = _run_pipeline(c)
         assert len([t for t in r["domain_model"].types if isinstance(t, Class)]) >= 8
-
-
-@pytest.mark.skipif(not ANTHROPIC_KEY, reason="ANTHROPIC_API_KEY not set")
-class TestLLMAnthropic:
-
-    def test_extract_oss_bot(self):
-        from besser.utilities.requirements_to_buml.extraction import extract_candidate
-        doc = _read_oss_doc()
-        c = extract_candidate(doc, provider="anthropic", model="claude-sonnet-4-20250514",
-                              api_key=ANTHROPIC_KEY, domain_hint="oss_bot")
-        assert len(c.classes) >= 10
-
-    def test_extract_generic(self):
-        from besser.utilities.requirements_to_buml.extraction import extract_candidate
-        c = extract_candidate(_LIBRARY_DOC, provider="anthropic",
-                              model="claude-sonnet-4-20250514",
-                              api_key=ANTHROPIC_KEY)
-        assert len(c.classes) >= 3

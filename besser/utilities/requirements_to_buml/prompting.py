@@ -64,26 +64,6 @@ SYSTEM_PROMPT = build_system_prompt()
 # User prompt
 # ---------------------------------------------------------------------------
 
-USER_PROMPT_TEMPLATE = """\
-## Requirements document
-
-{document_text}
-
-## Domain hint
-{domain_hint}
-
-## Candidate core classes (suggested — you may add or adjust)
-{core_class_hints}
-
-## Reminders
-- Output a candidate domain metamodel (M2), NOT a configuration instance.
-- Associations, not string foreign keys.  Enumerations, not free strings.
-- Uncertain items → unresolved_items.  Complex sub-structures → extensions.
-- Output ONLY a single JSON object.
-"""
-
-DEFAULT_DOMAIN_HINT = "General software engineering domain."
-
 OSS_BOT_DOMAIN_HINT = """\
 OSS community bot orchestration domain.
 Key concepts: AutomationProject, Environment, PlatformConnector,
@@ -103,19 +83,23 @@ DOMAIN_HINT_REGISTRY: dict[str, tuple[str, str]] = {
 }
 
 
-def build_user_prompt(
-    document_text: str,
-    domain_hint: str | None = None,
-    core_class_hints: str | None = None,
-) -> str:
+def build_user_prompt(document_text, domain_hint=None, core_class_hints=None):
     if domain_hint in DOMAIN_HINT_REGISTRY:
         hint_text, default_classes = DOMAIN_HINT_REGISTRY[domain_hint]
         domain_hint = hint_text
         if core_class_hints is None:
             core_class_hints = default_classes
 
-    return USER_PROMPT_TEMPLATE.format(
-        document_text=document_text,
-        domain_hint=domain_hint or DEFAULT_DOMAIN_HINT,
-        core_class_hints=core_class_hints or "(infer from document)",
+    parts = [f"## Requirements document\n\n{document_text}"]
+    if domain_hint:
+        parts.append(f"## Domain hint\n{domain_hint}")
+    if core_class_hints:
+        parts.append(f"## Candidate core classes\n{core_class_hints}")
+    parts.append(
+        "## Reminders\n"
+        "- Output a candidate domain metamodel (M2), NOT a configuration instance.\n"
+        "- Associations, not string foreign keys. Enumerations, not free strings.\n"
+        "- Uncertain items → unresolved_items. Complex sub-structures → extensions.\n"
+        "- Output ONLY a single JSON object."
     )
+    return "\n\n".join(parts)

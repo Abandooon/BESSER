@@ -34,8 +34,9 @@ def requirements_to_buml(
     document_text: str,
     *,
     provider: str = "openai",
-    model: str = "gpt-4o",
+    model: str = "gpt-5-nano",
     api_key: str | None = None,
+    base_url: str | None = None,
     domain_hint: str | None = None,
     skip_llm: bool = False,
     candidate_json: dict | None = None,
@@ -77,6 +78,7 @@ def requirements_to_buml(
             provider=provider,
             model=model,
             api_key=api_key,
+            base_url=base_url,
             domain_hint=domain_hint,
         )
 
